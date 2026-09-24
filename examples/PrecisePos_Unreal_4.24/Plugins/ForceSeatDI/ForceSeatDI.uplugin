@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "ForceSeatDI plugin for Unreal Engine",
+	"Description": "ForceSeatDI is an easy to use yet powerful interface that allows to add a motion platforms support to any application or game.",
+	"Category": "MotionSystems",
+	"CreatedBy": "MotionSystems",
+	"CreatedByURL": "https://motionsystems.eu",
+	"DocsURL": "https://motionsystems.eu/category/forceseatdi/",
+	"MarketplaceURL": "https://motionsystems.eu",
+	"SupportURL": "https://motionsystems.eu/support",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "ForceSeatDI",
+			"Type": "DeveloperTool",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PhysXVehicles",
+			"Enabled": true
+		}
+	]
+}

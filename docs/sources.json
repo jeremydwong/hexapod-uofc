@@ -1,0 +1,47 @@
+[
+  {
+    "file": "PS-6TL-350-tech-sheet.pdf",
+    "source_url": "https://motionsystems.eu/api/download/tech-sheet/ps-6tl-350",
+    "retrieved_date": "2026-09-11",
+    "revision": "Current generated product card; no printed revision date",
+    "pages": 4,
+    "bytes": 830194,
+    "sha256": "e9abf625ea82396552f9dd8be360cbf8dc988960e544b0784a236aadb7785442"
+  },
+  {
+    "file": "ForceSeatDI-manual.pdf",
+    "source_url": "https://motionsystems.eu/files/ForceSeatDI.pdf",
+    "retrieved_date": "2026-09-11",
+    "revision": "R1.1 2023-12-06",
+    "pages": 15,
+    "bytes": 650339,
+    "sha256": "31370cc1427c8c9b7275d457bc24493cd75759814f2e6ad6416f4ce1dea0e6bc"
+  },
+  {
+    "file": "ForceSeatMI-manual.pdf",
+    "source_url": "https://motionsystems.eu/files/ForceSeatMI.pdf",
+    "retrieved_date": "2026-09-11",
+    "revision": "R1.9 2025-12-12",
+    "pages": 54,
+    "bytes": 2442644,
+    "sha256": "fee45079d26a640425e991522bc56e87cffd9cce160da169567acf117a6d1dcc"
+  },
+  {
+    "file": "ForceSeatPM-manual.pdf",
+    "source_url": "https://motionsystems.b-cdn.net/files/Software_FSPM_motionsystems.pdf",
+    "retrieved_date": "2026-09-11",
+    "revision": "R1.0 2026-07-14",
+    "pages": 80,
+    "bytes": 12066272,
+    "sha256": "04a5b16aff3fa28f4a0e681069d7cbc552476bd045819cdb029a5749005dafe2"
+  },
+  {
+    "file": "M10-hardware-imitator-manual.pdf",
+    "source_url": "https://motionsystems.b-cdn.net/files/M10_Motion_Imitator.pdf",
+    "retrieved_date": "2026-09-11",
+    "revision": "R1.0 2026-07-22",
+    "pages": 9,
+    "bytes": 1824171,
+    "sha256": "388babbe6254ac8b2f87bffc196933b36b7fa942a000a0a7ac679709becee422"
+  }
+]
