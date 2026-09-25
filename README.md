@@ -161,3 +161,38 @@ Hello.
     Could you, please elaborate what exactly you need from us exactly as your last sentence is not exactly unclear to us ?
 
 Regards
+
+## Activation codes and cabinet identifiers
+
+Transcribed from `~/Downloads/code1.png` and `~/Downloads/code2.png`
+(email thread “Platform arrived!”), 2026-09-24. Wrapped lines in the screenshots
+are joined below; copy each code as one uninterrupted string.
+
+The email labels the first code **SDK MI** (ForceSeatMI) and the second
+**Motion Theater**. It does not explicitly label either as a ForceSeatPM
+activation code. The cabinet license is recorded separately with its original
+label. These have been transcribed, not tested for activation.
+
+### SDK MI activation code
+
+```text
+7dc8b6297f1bafe6f83cd4e0b6290154cba6db65f7b9eaeed58e4192
+```
+
+### Motion Theater activation code
+
+```text
+8e7f37a60268692f663a33f467b81e8125e0df977b045beeb792ceac3126802d5b6c7eaf6c16ce8f598060a1c230c35125fd712e313bffe06c28bb8be52ba7ad0566413255e167990c68062d1f28a89e909edbf2219d08cfcdace6bcb07117c5a257d8496d43f96f
+```
+
+### Power cabinet
+
+- Serial number: `24A7-C7CE73286A`
+- License number: `3A0034-001551-303338-353336`
+
+### M10 delivery note
+
+The second screenshot says an M10 had been purchased but was missing from the
+crate. Motion Systems replied that it should have been included and would be
+shipped immediately. This confirms the purchase and promised shipment, not
+subsequent delivery or a local installation.
