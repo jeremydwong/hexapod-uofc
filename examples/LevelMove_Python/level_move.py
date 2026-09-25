@@ -29,6 +29,7 @@ DEADLINE_S = 0.2  # abort if one loop iteration takes longer than this
 MAX_BOUND_MM = 150.0
 ACCEL_PROFILES = {"auto": 0, "rapid": 1, "balanced": 2, "smoothest": 3}  # FSDI_AccelerationProfile
 VENDOR_INTERVAL_MS = 10  # examples/PrecisePos_CSV_CPP_Win/main.cpp: INTERVAL_MS = 10
+M10_SERIAL = "5f0051-000150-344335-353720"  # Controller S/N of our M10 imitator (README.md); default USB target
 
 # FSDI_State bits (code/ForceSeatDI_Structs.h)
 STATE_PAUSED, STATE_OFFLINE, STATE_REF_RUN_DONE, STATE_PARK_MASK = 1 << 0, 1 << 2, 1 << 4, 0xE0
@@ -248,9 +249,9 @@ def main():
     parser.add_argument("--rate", type=float, default=5.0, help="max setpoint speed in mm/s")
     parser.add_argument("--hardware", action="store_true", help="required: explicitly enable SDK device operation")
     parser.add_argument("--library", required=True, help="installed ForceSeatDI native library")
-    transport = parser.add_mutually_exclusive_group(required=True)
+    transport = parser.add_mutually_exclusive_group()
     transport.add_argument("--ip")
-    transport.add_argument("--serial")
+    transport.add_argument("--serial", help=f"USB controller S/N (default: M10 imitator {M10_SERIAL})")
     parser.add_argument("--run-byte", type=int, choices=[0, 1], required=True)
     parser.add_argument("--max-speed", type=int, default=2000,
                         help="FSDI maxSpeed field, logical units 1-65535 (65535 = no limit); NOT mm/s")
@@ -262,6 +263,8 @@ def main():
     args = parser.parse_args()
     if not args.hardware:
         parser.error("--hardware is required; there is no simulation mode")
+    if not args.ip and args.serial is None:
+        args.serial = M10_SERIAL
     if not (args.ip or args.serial):
         parser.error("provide a nonempty device IP or USB serial")
     if not 1 <= args.max_speed <= 65535:

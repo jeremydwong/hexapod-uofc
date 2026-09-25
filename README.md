@@ -120,6 +120,30 @@ are comfortable with a C codebase, Option B is cheaper and tighter. Either
 way, the hexapod-side work in examples/LevelMove_Python and the API notes
 carry over unchanged.
 
+## Hardware on hand
+
+PS-6TL-350 platform (rating label, photo in hexapodserial.jpg):
+
+| Field | Value |
+| --- | --- |
+| Model / revision | PS-6TL-350, Rev 1.4.2 |
+| Serial number | 249B-B66E0BF594 |
+| Manufacture date | 2024-10-28 |
+
+M10 Motion Imitator:
+
+| Field | Value |
+| --- | --- |
+| USB ID / name | `0483:A110`, enumerates as `ForceSeatMP1` |
+| Controller S/N (ForceSeatPM Devices window; also reported by USB and ForceSeatDI) | 5f0051-000150-344335-353720 |
+
+Read-only SDK probe on 2026-09-24 (ForceSeatDI64.dll, USB): connection OK, no
+module errors, referenced, not paused, soft-parked (state `0x52`), heave
+-165.65 mm, and `GetLicenseStatus` false. The ForceSeatDI license lives on the
+device and is activated once through ForceSeatPM: Tools and Diagnostic →
+Devices → Quick Codes, then power-cycle and check Features shows FSDI
+(docs/ForceSeatDI-manual.pdf, section 2).
+
 ---
 
 # SOP: Tyler 2026-09-15 13:30

@@ -1,11 +1,5 @@
 # ForceSeatDI level move example
 
-This example operates through the provided ForceSeatDI SDK only. It has no
-simulation mode, browser controller, geometry model, force estimator, or Meshcat
-visualizer. The earlier simulated reports and model files have been deleted.
-Manufacturer documentation remains in ../../docs; the supplied SDK examples
-elsewhere in this repository are unchanged.
-
 `level_move.py` uses ctypes and the supplied code/ForceSeatDI_Structs.py to call
 the installed native ForceSeatDI library over Ethernet or USB. It defaults to
 surge; sway and heave are also supported. Twist is not implemented here.
