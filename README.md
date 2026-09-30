@@ -20,13 +20,13 @@
                                       │ UDP packet: "perturb: axis, profile, amplitude, t0"
                                       ▼
                         ┌───────────────────────────┐
-                        │  Host PC (Windows)          │  Simulink, paced to wall clock
-                        │  "slave"                    │  vendor ForceSeatDI blocks
-                        │  - receive UDP command       │  (plugins/Matlab/Simulink)
+                        │  Hexapod host (Linux/Win)   │  any ForceSeatDI binding: C/C++,
+                        │  "slave"                    │  Python, C#, or the Simulink blocks
+                        │  - receive UDP command       │  (Simulink blocks: Windows only)
                         │  - generate pose trajectory  │
                         │  - SendTopTablePosPhy @10 ms │
                         └─────────────┬─────────────┘
-                                      │ USB (or Ethernet) — ForceSeatDI64.dll
+                                      │ USB or Ethernet — ForceSeatDI64.dll / ForceSeatDI64.so
                                       ▼
                         ┌───────────────────────────┐
                         │  PS-6TL-350 controller      │  inverse kinematics, ramps,
@@ -38,11 +38,20 @@
 ```
 
 The hexapod cannot hang off the Speedgoat directly: ForceSeatDI ships only
-for Windows/Linux x64 and Raspberry Pi, and the vendor states the Simulink
-blocks are Windows-only. That is the only reason the host PC exists in the
-chain.
+for Windows x64 (`ForceSeatDI64.dll`), Linux x64 (`ForceSeatDI64.LinuxPC.so`;
+the C loader expects it renamed to `./ForceSeatDI64.so`) and Raspberry Pi
+(`ForceSeatDI64.RSPi_4_*.so`). That is the only reason the hexapod host exists
+in the chain. The host does not have to be Windows or Simulink: the same API
+is callable from C/C++, Python (examples/LevelMove_Python) or C#, and only the
+vendor's Simulink blocks are Windows-only. "Host" here means the machine that
+drives the hexapod; if a Speedgoat is used, the separate Simulink Real-Time
+development computer that builds and deploys models to it is Windows, but it
+does not need to be in the real-time path.
 
-## Trigger-to-motion latency (estimates, nothing measured yet)
+## Trigger-to-motion latency, Option A as proposed (estimates, nothing measured yet)
+
+This is for the chain drawn above with a Windows host running Simulink. See
+Option E below for the tighter Linux design.
 
 | Hop | Typical | Jitter | Basis |
 | --- | --- | --- | --- |
@@ -64,6 +73,11 @@ Consequences:
    per-trial file can record intended vs actual onset.
 3. The host step size should be as small as the vendor library tolerates
    (10 ms is proven by their own examples; 5 ms is used in their Python demo).
+4. Measured 2026-09-29 on this Windows laptop (Python 100 Hz loop, M10 over
+   USB): mean period 10.2 ms, but a 110–156 ms stall every 5–15 s, and all
+   gaps quantised to the 15.6 ms Windows timer tick. The platform held its
+   last setpoint through each stall. Windows is fine for testing, not for
+   time-locked perturbation onset.
 
 ## Do we need Speedgoat at all?
 
@@ -72,7 +86,7 @@ sampling of ~14+ analog inputs and one analog output, (b) a trigger decision
 inside a few ms, (c) time-locked per-trial recording, and (d) hexapod
 commands. Two ways to get that:
 
-**Option A, as proposed: Speedgoat + Windows host.** Two computers, one UDP
+**Option A, as proposed: Speedgoat + Windows Simulink host.** Two computers, one UDP
 hop, Simulink everywhere. Pros: hard real-time I/O with vendor-supported DAQ
 modules; the lab's own staff can maintain Simulink models after the contract;
 if the lab already owns the Speedgoat and I/O modules this costs nothing
@@ -88,7 +102,8 @@ removes the UDP hop and the Windows jitter entirely; one machine; no
 MATLAB licence in the loop; we already have working DI code. Cons: someone
 writes and maintains a real-time C application and DAQ driver integration;
 the lab loses the Simulink workflow they asked for; DAQ vendor Linux driver
-support varies; the vendor notes ForceSeatDI on Linux wants root for USB.
+support varies; the vendor notes ForceSeatDI on Linux wants root for USB
+(connecting over Ethernet avoids that).
 
 **Option C: Windows host does everything, no Speedgoat.** A Windows DAQ
 card sampled from the same process that drives the hexapod. Simplest, but
@@ -99,7 +114,7 @@ Ryan describes.
 
 **Option D: Speedgoat speaks the controller's Ethernet protocol directly.**
 The controller accepts network connections (ConnectToNetworkDevice), so in
-principle the Speedgoat could send packets itself and the Windows host would
+principle the Speedgoat could send packets itself and the hexapod host would
 disappear along with its jitter. Blockers: the protocol is proprietary and
 undocumented, and the DI library does more than framing. The Linux readme
 says the library computes the work envelope on the PC, so inverse
@@ -111,14 +126,100 @@ Firmware-side safeties (actuator stops, servo limits, thermal, E-stop, park)
 would remain. Worth one question to the vendor ("is the network protocol
 available under NDA for a real-time target?"); do not plan around it.
 
-Recommendation: ask the lab two questions before deciding. (1) Do they
-already own the Speedgoat and its analog I/O modules? (2) Who maintains the
-system after the contract, and do they work in Simulink? If both answers
-point at Speedgoat, Option A is the right call and the onset-sync channel in
-point 1 above fixes its main weakness. If they are buying hardware fresh and
-are comfortable with a C codebase, Option B is cheaper and tighter. Either
-way, the hexapod-side work in examples/LevelMove_Python and the API notes
-carry over unchanged.
+**Option E (proposed, tightest): Linux RT is the controller; Speedgoat is
+only I/O and the logger.** The decision loop moves off the Speedgoat onto a
+PREEMPT_RT Linux box, which commands the hexapod directly and reports the
+hexapod's state back to the Speedgoat so the log carries it.
+
+```
+                  ┌────────────────────────┐
+                  │  Python GUI (any PC)    │  config, trial list, start/stop
+                  └───────────┬────────────┘  (TCP, not in the real-time path)
+                              ▼
+┌──────────────────────┐  UDP 1 kHz, NIC 1   ┌─────────────────────────────┐
+│ Speedgoat: I/O+logger │ ──────────────────► │ Linux PREEMPT_RT "brain"      │
+│ - sample force/EMG AI │  sample idx + force │ - CoP position/velocity       │
+│   on its own clock    │                     │ - trigger state machine       │
+│ - AO: EVS waveform    │ ◄────────────────── │   (conditions, jitter,        │
+│   generated locally   │  echo sample idx,   │    randomisation, catch)      │
+│ - logs everything,    │  events, commanded  │ - profile generator           │
+│   one master clock    │  + SDK-reported     │ - ForceSeatDI64.so            │
+│ - AI: accelerometer   │  pose, stim on/off  └──────────────┬──────────────┘
+│   on top frame        │                                    │ Ethernet, NIC 2
+└──────────▲───────────┘                                    ▼  (no root needed)
+           │ accelerometer (ground-truth onset)   ┌─────────────────────────┐
+           └──────────────────────────────────────│ PS-6TL-350 controller    │
+                                                  └─────────────────────────┘
+```
+
+Loop design:
+
+1. **The Speedgoat clocks the loop.** It sends one small UDP packet per
+   1 kHz step: sample index plus the 12 force-plate channels (EMG is only
+   logged, not streamed). The Linux control thread blocks on that socket, so
+   its loop is paced by Speedgoat samples, not a second clock. If packets stop
+   for more than a few ms, a watchdog holds the platform and pauses.
+2. **The Linux control thread** (SCHED_FIFO, pinned to an isolated core)
+   computes CoP and its velocity, runs the trigger state machine and profile
+   generator, and writes the latest setpoint to shared memory. It never calls
+   the SDK itself, so a slow SDK call cannot delay the decision.
+3. **The Linux hexapod thread** (second isolated core) sends setpoints with
+   `SendTopTablePosPhy` at the fastest rate the controller accepts (10 ms is
+   proven, 5 ms is in vendor demos; measure 1–2 ms). On a trigger it is woken
+   immediately (eventfd), so the first command goes out within about a
+   millisecond instead of waiting for the next tick. It reads back the SDK
+   pose and platform state each cycle.
+4. **Everything is reported back to the Speedgoat.** Each Linux → Speedgoat
+   packet echoes the sample index it is responding to and carries events
+   (trigger fired, profile id, catch trial), the commanded and SDK-reported
+   pose, and the platform state bits. The Speedgoat logs these next to its
+   analog data on one clock, so every trial file has samples, decision,
+   command and reported motion aligned. The top-frame accelerometer on a
+   Speedgoat AI channel gives the true onset, independent of every software
+   hop.
+5. **The EVS stimulator waveform is generated on the Speedgoat**
+   (deterministic AO). Linux only sends start/stop and a seed, so the
+   stimulus stays sample-exact.
+
+Linux RT setup: mainline kernel ≥ 6.12 with `PREEMPT_RT` (in mainline
+since 6.12); `isolcpus`/`nohz_full`/`rcu_nocbs` for the two real-time cores;
+`mlockall`; `SCHED_FIFO`; performance CPU governor and `cpu_dma_latency` = 0
+(no deep C-states); two NICs on direct cables (Speedgoat, hexapod) with their
+interrupts pinned to the real-time cores; busy-polling receive on the
+Speedgoat socket. Written in C++; the Python GUI talks to it over TCP and is
+never in the loop.
+
+Trigger-to-motion budget for Option E (estimates, to be measured):
+
+| Hop | Typical | Jitter |
+| --- | --- | --- |
+| CoP condition in the samples → Speedgoat sends packet | ≤1 ms | ~0 |
+| UDP to Linux, direct cable, busy poll | 0.05–0.2 ms | <0.1 ms |
+| CoP + decision on Linux | <0.05 ms | ~0 |
+| Wake hexapod thread + SDK call → controller (Ethernet) | ~1 ms | ~1 ms |
+| Controller ramp → first measurable motion | 10–30 ms | small |
+| **Total** | **~12–33 ms** | **~1–2 ms** |
+
+Compared with Option A, jitter drops from ~10–20 ms to ~1–2 ms. What is left
+is the platform itself: the controller's ramp dominates the latency, and how
+often it accepts a new setpoint sets the jitter floor. Neither can be tuned
+from our side, so measure them first. With the M10 on hand, still before the
+platform: SDK call duration distribution over Ethernet and USB on Linux, and
+the fastest setpoint rate the controller accepts. On the platform: trigger →
+accelerometer onset over a few hundred trials.
+
+Note that Option E is Option B with the Speedgoat as the DAQ. If the lab
+later drops the Speedgoat, a hardware-timed DAQ card on the Linux box
+replaces it and the control code does not change.
+
+Recommendation: Option E if the lab keeps the Speedgoat, Option B if it does
+not. Either way the real-time logic is plain C++ in git, the Simulink side is
+a thin I/O-and-logging model, and the lab keeps its MATLAB data files.
+Before committing, still ask (1) whether the Speedgoat and its I/O modules
+are already bought, and (2) who maintains the system after the contract. If
+the maintainers only work in Simulink, Option A with the onset-sync channel
+(point 1 of the latency notes) is the fallback. The hexapod-side work in
+examples/LevelMove_Python and the API notes carry over to all of these.
 
 ## Hardware on hand
 
@@ -143,6 +244,12 @@ module errors, referenced, not paused, soft-parked (state `0x52`), heave
 device and is activated once through ForceSeatPM: Tools and Diagnostic →
 Devices → Quick Codes, then power-cycle and check Features shows FSDI
 (docs/ForceSeatDI-manual.pdf, section 2).
+
+2026-09-29: after entering the M10 quick codes below, `GetLicenseStatus`
+returns true. Park-to-park surge and sway tests ran on the M10
+(examples/LevelMove_Python/test_from_park.py, report.py). ForceSeatPM must be
+closed while the SDK is connected; it holds the USB device and the connect
+call fails.
 
 ---
 
@@ -197,16 +304,28 @@ The email labels the first code **SDK MI** (ForceSeatMI) and the second
 activation code. The cabinet license is recorded separately with its original
 label. These have been transcribed, not tested for activation.
 
-### SDK MI activation code
+### M10 quick codes (serial 5F0051-000150-344335-353720)
+
+Sent by Motion Systems by email for the M10 Motion Imitator. They were
+entered via ForceSeatPM Quick Codes, and the M10 was reported working on
+2026-09-29. Copy each code as one uninterrupted string.
+
+SDK MI:
 
 ```text
-7dc8b6297f1bafe6f83cd4e0b6290154cba6db65f7b9eaeed58e4192
+c0e8d75cfa98016e37b73eaa41e83bc05dd0693b6e79fd6e528bbb5303fcbfc2590974fb6e2f00fb4f817556c39908c0eb3b5c5946fd27c90632ef83873a69f1aafd8fabc2a6d930f8283267dfdd1853cf6d5ceb0e02ef5c5de4a9d0ada62206201406d0b0df47e8
 ```
 
-### Motion Theater activation code
+SDK DI:
 
 ```text
-8e7f37a60268692f663a33f467b81e8125e0df977b045beeb792ceac3126802d5b6c7eaf6c16ce8f598060a1c230c35125fd712e313bffe06c28bb8be52ba7ad0566413255e167990c68062d1f28a89e909edbf2219d08cfcdace6bcb07117c5a257d8496d43f96f
+638ce3ae8ab9fa619fa0fa89264db9ecd4c6831c4f019840d58e4192
+```
+
+Motion Theater:
+
+```text
+689d51ca6d64085dbb864418b6b4e6af7fc2f54be678f8d09db0f4809c2a2303618e5493d10a6dd1615c9eb0faef4b58213f03aa5a3b263ca19f074bc6a98d3f2fcf7b04cbf8406acbb26e80346670e26af2d727d07871b55da35562d55be8f582bc3291b456cb32
 ```
 
 ### Power cabinet
@@ -220,3 +339,15 @@ The second screenshot says an M10 had been purchased but was missing from the
 crate. Motion Systems replied that it should have been included and would be
 shipped immediately. This confirms the purchase and promised shipment, not
 subsequent delivery or a local installation.
+
+### OLD DOES NOT WORK SDK MI activation code
+
+```text
+7dc8b6297f1bafe6f83cd4e0b6290154cba6db65f7b9eaeed58e4192
+```
+
+### OLD DOES NOT WORK Motion Theater activation code
+
+```text
+8e7f37a60268692f663a33f467b81e8125e0df977b045beeb792ceac3126802d5b6c7eaf6c16ce8f598060a1c230c35125fd712e313bffe06c28bb8be52ba7ad0566413255e167990c68062d1f28a89e909edbf2219d08cfcdace6bcb07117c5a257d8496d43f96f
+```
