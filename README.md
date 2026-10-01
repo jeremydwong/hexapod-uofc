@@ -213,7 +213,7 @@ later drops the Speedgoat, a hardware-timed DAQ card on the Linux box
 replaces it and the control code does not change.
 
 Recommendation: Option E if the lab keeps the Speedgoat, Option B if it does
-not. Either way the real-time logic is plain C++ in git, the Simulink side is
+not. The file-by-file build plan for Option E is in PLAN.md. Either way the real-time logic is plain C++ in git, the Simulink side is
 a thin I/O-and-logging model, and the lab keeps its MATLAB data files.
 Before committing, still ask (1) whether the Speedgoat and its I/O modules
 are already bought, and (2) who maintains the system after the contract. If

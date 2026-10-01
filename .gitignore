@@ -3,3 +3,13 @@
 \#*\#
 __pycache__/
 examples/LevelMove_Python/output/
+/output/
+/data/
+# Generated Simulink models, caches and local run data
+examples/Waypoints_Simulink/Waypoints_FSDI.slx
+examples/Waypoints_Simulink/*.mat
+examples/Waypoints_Simulink/*.dll
+slprj/
+*.slxc
+*.autosave
+fsdi_simulink_log.txt
