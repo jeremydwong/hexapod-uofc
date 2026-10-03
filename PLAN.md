@@ -28,7 +28,7 @@ Python GUI ──TCP JSON (config, start/stop)──► Linux RT brain
 
 Goal: real numbers for SDK call cost and the controller's setpoint rate.
 
-- [ ] `tools/sdk_timing/sdk_timing.py`: reuses `examples/LevelMove_Python/level_move.Device` and the lift/park helpers from `test_from_park.py`.
+- [ ] `tools/sdk_timing/sdk_timing.py`: reuses `uofc_hexa.hexapod.level_move.Device` and the lift/park helpers from `test_from_park.py`.
   - holds home and adds a ±1 mm, 0.5 Hz surge sine, so every setpoint differs
   - sweeps send periods 10, 4, 2, 1 ms (60 s each)
   - per cycle: `perf_counter_ns` timestamps, duration of each SDK call, sent setpoint, `requiredMotorPosition` (what the controller accepted), `actualMotorPosition`, reported pose
@@ -36,7 +36,7 @@ Goal: real numbers for SDK call cost and the controller's setpoint rate.
   - Windows: `timeBeginPeriod(1)`, `REALTIME_PRIORITY_CLASS`, one pinned core, `gc.disable()` during the loop
   - Linux (phase 2): same script, `SCHED_FIFO`, `mlockall`, pinned core
 - [ ] Setpoint-rate estimate: the rate at which `requiredMotorPosition` changes, compared with the send rate. If it saturates near 250 Hz, that is the controller's cycle.
-- [ ] `tools/sdk_timing/timing_report.py`: histograms of loop period, per-call durations and time-to-acceptance, per period; mirrors `examples/LevelMove_Python/report.py`.
+- [ ] `tools/sdk_timing/timing_report.py`: histograms of loop period, per-call durations and time-to-acceptance, per period; mirrors `rig/uofc_hexa/hexapod/report.py`.
 
 Outputs (in `output/timing/`, gitignored):
 - `<host>_<os>_<period>ms.csv` (one row per cycle)
@@ -138,7 +138,7 @@ Outputs: `experiments/<name>.json` (versioned in git).
 - [ ] Brain + Speedgoat + M10: full session; check event alignment in the exported `.mat`.
 - [ ] Platform + accelerometer: ≥ 300 triggers; latency = accelerometer onset − trigger sample, all on the Speedgoat clock.
 - [ ] `rig/analysis/latency_report.py`: onset detection, latency histogram, jitter percentiles; compare with the README budget (~12–33 ms, ~1–2 ms jitter).
-- [ ] `rig/analysis/session_report.py`: per-session HTML (trials, CoP at trigger, profiles, meshcat replay reusing `examples/LevelMove_Python/report.py`).
+- [ ] `rig/analysis/session_report.py`: per-session HTML (trials, CoP at trigger, profiles, meshcat replay reusing `rig/uofc_hexa/hexapod/report.py`).
 - [ ] Update README Option E with measured numbers.
 
 Outputs: `output/latency/latency_report.html`, `output/sessions/<session>/report.html`.

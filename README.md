@@ -1,3 +1,46 @@
+# Repo layout
+
+| Path | Whose | Contents |
+| --- | --- | --- |
+| `rig/` | ours | Everything we write. `rig/uofc_hexa/`: the Python package (`uofc_hexa.hexapod`: `level_move`, `test_from_park`, `report`; `uofc_hexa.vendor`: finds the SDK bindings). `rig/hexapod_simulink/`: the same waypoint sequence on the vendor Simulink blocks. The Option E code (PLAN.md) goes here too. |
+| `code/`, `examples/`, `plugins/`, `readme.txt` | Motion Systems | ForceSeatDI SDK as shipped: the API headers and bindings (`code/`), vendor examples, Simulink/Unity/Unreal plugins. Kept unmodified, so a newer SDK can be copied over it. |
+| `docs/` | Motion Systems PDFs, our index | Unmodified vendor manuals and the PS-6TL-350 tech sheet; `docs/README.md` and `sources.json` are our notes on them (sources, revisions, hashes, useful pages). |
+
+The vendor DLL/.so files are not in the repo; copy them from the SDK
+(`ForceSeatDI64.dll` on Windows, `ForceSeatDI64.LinuxPC.so` on Linux).
+
+## Running our Python tools
+
+One uv project at the repo root (`pyproject.toml`, `uv.lock`). Install name
+`uofc-hexa`, import name `uofc_hexa` (source in `rig/uofc_hexa/`).
+`uofc_hexa/vendor.py` finds the vendor's Python bindings: in this repo it
+reads them from `code/`; an installed wheel carries its own copy of the two
+binding files. The native DLL/.so is never bundled.
+
+```
+git clone git@github.com:jeremydwong/hexapod-uofc.git && cd hexapod-uofc
+uv sync                                   # exact versions from uv.lock
+$env:FORCESEATDI_LIBRARY = "C:\path\to\ForceSeatDI64.dll"   # PowerShell; or pass --library each time
+uv run hexapod-park-test --hardware --run-byte 0 --output output/sequence
+uv run hexapod-report --output output/sequence
+uv run hexapod-move --help                # single-axis level move
+```
+
+The commands work from any folder inside the repo; `--output` (default
+`output`) is relative to where you run them, and `/output/` at the repo root
+is gitignored.
+
+From another repo: `uv add --editable ../hexapod-uofc` (checkout on the same
+machine; edits show up immediately) or
+`uv add "uofc-hexa @ git+ssh://git@github.com/jeremydwong/hexapod-uofc.git"`
+(installs a copy; pin a tag or commit with `@<ref>`). Then
+`from uofc_hexa.hexapod import level_move`.
+
+Close ForceSeatPM (and any
+Simulink model using the ForceSeatDI blocks) first: only one program can
+hold the device. `--serial` defaults to the M10 imitator; pass the platform
+controller's serial (or use `hexapod-move --ip`) for the real platform.
+
 # Architecture notes (Jeremy, 2026-09-23)
 
 ## Proposed wiring and communication (per Ryan/Tyler emails below)
@@ -42,7 +85,7 @@ for Windows x64 (`ForceSeatDI64.dll`), Linux x64 (`ForceSeatDI64.LinuxPC.so`;
 the C loader expects it renamed to `./ForceSeatDI64.so`) and Raspberry Pi
 (`ForceSeatDI64.RSPi_4_*.so`). That is the only reason the hexapod host exists
 in the chain. The host does not have to be Windows or Simulink: the same API
-is callable from C/C++, Python (examples/LevelMove_Python) or C#, and only the
+is callable from C/C++, Python (rig/uofc_hexa) or C#, and only the
 vendor's Simulink blocks are Windows-only. "Host" here means the machine that
 drives the hexapod; if a Speedgoat is used, the separate Simulink Real-Time
 development computer that builds and deploys models to it is Windows, but it
@@ -219,7 +262,7 @@ Before committing, still ask (1) whether the Speedgoat and its I/O modules
 are already bought, and (2) who maintains the system after the contract. If
 the maintainers only work in Simulink, Option A with the onset-sync channel
 (point 1 of the latency notes) is the fallback. The hexapod-side work in
-examples/LevelMove_Python and the API notes carry over to all of these.
+rig/uofc_hexa and the API notes carry over to all of these.
 
 ## Hardware on hand
 
@@ -247,7 +290,7 @@ Devices → Quick Codes, then power-cycle and check Features shows FSDI
 
 2026-09-29: after entering the M10 quick codes below, `GetLicenseStatus`
 returns true. Park-to-park surge and sway tests ran on the M10
-(examples/LevelMove_Python/test_from_park.py, report.py). ForceSeatPM must be
+(`uv run hexapod-park-test`, `hexapod-report`). ForceSeatPM must be
 closed while the SDK is connected; it holds the USB device and the connect
 call fails.
 

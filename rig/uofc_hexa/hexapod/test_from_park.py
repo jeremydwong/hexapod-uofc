@@ -1,7 +1,3 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["numpy==2.5.3"]
-# ///
 """Park-to-park level sequence: lift from soft park to home, visit waypoints, lower back, park.
 
   lift    stream a smoothstep from the reported (parked) pose to (0,0,0) at --lift-rate mm/s
@@ -22,9 +18,9 @@ import time
 
 import numpy as np
 
-import level_move as lm
+from uofc_hexa import vendor
+from uofc_hexa.hexapod import level_move as lm
 
-HERE = Path(__file__).resolve().parent
 LIFT_BOUND_MM = 170.0  # heave single excursion is -165.8 mm (tech sheet); lift/lower only
 LOWEST_HEAVE_MM = -165.0  # FullMatch rejects the parked pose (-165.65 mm); -165.0 is accepted
 STALL_S = 5.0  # abort lift if the platform has not moved 1 mm after this long
@@ -105,7 +101,8 @@ def stream(device, start, end, rate, phase, t0, rows, states, hold=2., bound=Non
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--library", required=True)
+    parser.add_argument("--library", default=vendor.default_library(), required=not vendor.default_library(),
+                        help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
     parser.add_argument("--serial", default=lm.M10_SERIAL)
     parser.add_argument("--run-byte", type=int, choices=[0, 1], required=True)
     parser.add_argument("--sequence", default="surge:+30,surge:-30,home,sway:+30,home,sway:-30,home",
@@ -116,7 +113,8 @@ def main():
     parser.add_argument("--lift-rate", type=float, default=10.0, help="lift/lower setpoint rate, mm/s")
     parser.add_argument("--max-speed", type=int, default=2000)
     parser.add_argument("--hardware", action="store_true")
-    parser.add_argument("--output", type=Path, default=HERE / "output")
+    parser.add_argument("--output", type=Path, default=Path("output"),
+                        help="output folder, relative to where you run the command")
     args = parser.parse_args()
     if not args.hardware:
         parser.error("--hardware is required")

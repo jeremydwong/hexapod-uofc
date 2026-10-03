@@ -9,7 +9,7 @@ function [xyz, seg, done] = waypoint_schedule(t, S, W, rest_s, rate, lift_rate)
 %
 %   Each move is a smoothstep (10u^3 - 15u^4 + 6u^5), whose peak speed is 1.875x
 %   the mean, so its duration is 1.875 * distance / rate. Same profile as
-%   examples/LevelMove_Python/test_from_park.py. Plain function, no state:
+%   rig/uofc_hexa/hexapod/test_from_park.py. Plain function, no state:
 %   safe to call from a MATLAB Function block and from scripts.
 %
 %   seg: 0 = lift to home, k = waypoint k, N+1 = lower to S, N+2 = finished.

@@ -1,7 +1,3 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["numpy==2.5.3", "matplotlib==3.10.8", "meshcat"]
-# ///
 """Build <output>/report.html from <output>/trajectory.csv: xyz plots, per-phase table, meshcat animation.
 
 The animation is schematic: the Stewart geometry below is illustrative, not the PS-6TL-350's
@@ -18,7 +14,6 @@ from pathlib import Path
 
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
 FPS = 30
 # Illustrative geometry (m). Neutral top-joint height chosen so heave -165.8 mm stays above the base.
 BASE_R, TOP_R, NEUTRAL_H, SPREAD = 0.62, 0.42, 0.46, np.deg2rad(12)
@@ -183,7 +178,8 @@ def animation(d):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=HERE / "output")
+    parser.add_argument("--output", type=Path, default=Path("output"),
+                        help="folder holding trajectory.csv, relative to where you run the command")
     args = parser.parse_args()
     d = load(args.output / "trajectory.csv")
     t, ph = d["time_s"], d["phase"]
@@ -224,7 +220,7 @@ iframe{{width:100%;height:620px;border:1px solid var(--line);border-radius:6px}}
 </style></head><body>
 <h1>M10 motion test</h1>
 <p class="muted">ForceSeatDI over USB, controller S/N 5F0051-000150-344335-353720 · run by
-<code>examples/LevelMove_Python/test_from_park.py</code> · data <code>{html.escape(args.output.name)}/trajectory.csv</code></p>
+<code>uv run hexapod-park-test</code> · data <code>{html.escape(args.output.name)}/trajectory.csv</code></p>
 <p>Sequence: {sequence}. All rotations commanded zero. Positions are what the SDK reports;
 there is no external measurement. Sway + is right, surge + is front.</p>
 <h2>Summary</h2><table>{''.join(f'<tr><td>{k}</td><td><b>{v}</b></td></tr>' for k, v in stats)}</table>

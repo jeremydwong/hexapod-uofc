@@ -22,7 +22,7 @@ actuator positions. These metrics are informational and never abort a run.
 Nothing here has been tested on hardware.
 
 An installed ForceSeatDI library, device address, and explicit --hardware flag
-are required. Run --help for arguments. Supply either --ip or --serial and a
+are required. Run `uv run hexapod-move --help` from anywhere in the repo for arguments; `--library` defaults to `$FORCESEATDI_LIBRARY`. Supply either --ip or --serial and a
 verified --run-byte (0 or 1): the supplied header and examples disagree about
 the pause flag. --max-speed is an SDK logical value, not mm/s. --accel-profile selects the
 controller's ramp shape (auto, rapid, balanced, smoothest); the API has no

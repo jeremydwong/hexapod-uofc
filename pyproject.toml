@@ -1,0 +1,31 @@
+[project]
+name = "uofc-hexa"
+version = "0.1.0"
+description = "PS-6TL-350 hexapod control, test and reporting tools (UofC balance perturbation rig)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy==2.5.3",
+    "matplotlib==3.10.8",
+    "meshcat",
+]
+
+[project.scripts]
+hexapod-move = "uofc_hexa.hexapod.level_move:main"
+hexapod-park-test = "uofc_hexa.hexapod.test_from_park:main"
+hexapod-report = "uofc_hexa.hexapod.report:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Install name uofc-hexa, import name uofc_hexa. Only our package is built; the vendor
+# SDK (code/, plugins/, examples/) stays unmodified in the repo.
+[tool.hatch.build.targets.wheel]
+packages = ["rig/uofc_hexa"]
+
+# Bundle the vendor's two pure-Python binding files so a git/wheel install works
+# without this repo checkout (see uofc_hexa/vendor.py).
+[tool.hatch.build.targets.wheel.force-include]
+"code/ForceSeatDI_Structs.py" = "uofc_hexa/_sdk/ForceSeatDI_Structs.py"
+"code/ForceSeatDI_Defines.py" = "uofc_hexa/_sdk/ForceSeatDI_Defines.py"

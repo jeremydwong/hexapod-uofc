@@ -2,14 +2,15 @@
 *~
 \#*\#
 __pycache__/
-examples/LevelMove_Python/output/
+dist/
 /output/
 /data/
 # Generated Simulink models, caches and local run data
-examples/Waypoints_Simulink/Waypoints_FSDI.slx
-examples/Waypoints_Simulink/*.mat
-examples/Waypoints_Simulink/*.dll
+rig/hexapod_simulink/Waypoints_FSDI.slx
+rig/hexapod_simulink/*.mat
+rig/hexapod_simulink/*.dll
 slprj/
 *.slxc
 *.autosave
 fsdi_simulink_log.txt
+.venv/

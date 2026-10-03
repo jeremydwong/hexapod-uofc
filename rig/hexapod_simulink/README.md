@@ -1,6 +1,6 @@
-# Waypoints_Simulink: park → home → surge/sway waypoints → park, in Simulink
+# hexapod_simulink: park → home → surge/sway waypoints → park, in Simulink
 
-Same motion as `examples/LevelMove_Python/test_from_park.py`, but built from
+Same motion as `rig/uofc_hexa/hexapod/test_from_park.py`, but built from
 the vendor's ForceSeatDI Simulink blocks so it fits the lab's existing
 Simulink setup. The motion logic is plain `.m` text; the `.slx` is generated
 by a script and is not committed.
@@ -38,7 +38,7 @@ it when the simulation stops.
 1. Close ForceSeatPM. Only one program can hold the device.
 2. Copy `ForceSeatDI64.dll` into this folder.
 3. Platform (or M10) parked; E-stop in reach.
-4. In MATLAB: `cd examples/Waypoints_Simulink`, `run_waypoints`.
+4. In MATLAB: `cd rig/hexapod_simulink`, `run_waypoints`.
 
 ## Safety behaviour, and why it is needed
 

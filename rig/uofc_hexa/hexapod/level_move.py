@@ -1,10 +1,6 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["numpy==2.5.3", "matplotlib==3.10.8"]
-# ///
-"""Connect → open-loop move to home (0,0,0) → open-loop move along one axis, always level. Log and plot.
+"""Connect -> open-loop move to home (0,0,0) -> open-loop move along one axis, always level. Log and plot.
 
-Run: uv run examples/LevelMove_Python/level_move.py
+Run: uv run hexapod-move --help  (from anywhere in the repo)
 Requires --hardware and explicit SDK connection arguments. No simulation mode.
 """
 from __future__ import annotations
@@ -18,7 +14,8 @@ import time
 
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
+from uofc_hexa import vendor
+
 DT = 0.01  # 100 Hz setpoint/log loop, same as the vendor CSV player; not a real-time actuator servo
 AXES = {"sway": 0, "surge": 1, "heave": 2}
 SETTLE_MM = 0.2  # reporting threshold only; never aborts the run
@@ -46,8 +43,7 @@ class Device:
 
     def __init__(self, library, ip, serial, run_byte, speed, accel_profile, bound):
         self.bound, self.accel_profile = bound, accel_profile
-        sys.path.insert(0, str(HERE.parents[1] / "code"))
-        import ForceSeatDI_Structs as s
+        s = vendor.structs()
         self.s, self.run_byte, self.speed = s, bytes([run_byte]), speed
         self.lib = ct.CDLL(str(Path(library).resolve()))
         self.api = None
@@ -248,7 +244,8 @@ def main():
                         help=f"abort if any reported or commanded translation exceeds this (mm, max {MAX_BOUND_MM:g})")
     parser.add_argument("--rate", type=float, default=5.0, help="max setpoint speed in mm/s")
     parser.add_argument("--hardware", action="store_true", help="required: explicitly enable SDK device operation")
-    parser.add_argument("--library", required=True, help="installed ForceSeatDI native library")
+    parser.add_argument("--library", default=vendor.default_library(), required=not vendor.default_library(),
+                        help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
     transport = parser.add_mutually_exclusive_group()
     transport.add_argument("--ip")
     transport.add_argument("--serial", help=f"USB controller S/N (default: M10 imitator {M10_SERIAL})")
@@ -259,7 +256,8 @@ def main():
                         help="FSDI accelerationProfile: shape of the controller's start/stop ramps")
     parser.add_argument("--hold", type=float, default=3.0, help="seconds to hold at the target after the move")
     parser.add_argument("--no-plot", action="store_true")
-    parser.add_argument("--output", type=Path, default=HERE / "output")
+    parser.add_argument("--output", type=Path, default=Path("output"),
+                        help="output folder, relative to where you run the command")
     args = parser.parse_args()
     if not args.hardware:
         parser.error("--hardware is required; there is no simulation mode")
