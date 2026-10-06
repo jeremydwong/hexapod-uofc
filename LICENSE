@@ -1,0 +1,39 @@
+Copyright (c) 2026 Jeremy Wong. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+This repository and its contents, except the third-party material listed
+below, are the proprietary work of the copyright holder ("the Software").
+
+No license or other right is granted, by implication, estoppel or otherwise,
+to any person to use, copy, modify, merge, publish, distribute, sublicense,
+sell or create derivative works of the Software, in whole or in part, except
+with the prior written permission of the copyright holder.
+
+Persons given access to this repository by the copyright holder may view the
+Software, and use it only for the purpose and duration for which access was
+given. Access does not transfer ownership or grant any further right.
+
+This repository may contain confidential information, including device
+serial numbers and software activation codes. It must not be disclosed to
+third parties without the copyright holder's written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE,
+INCLUDING ANY DAMAGE, INJURY OR LOSS ARISING FROM THE OPERATION OF MOTION
+HARDWARE CONTROLLED BY IT.
+
+THIRD-PARTY MATERIAL (NOT COVERED BY THIS LICENSE)
+
+The following are the property of MotionSystems (www.motionsystems.eu) and
+remain subject to their own copyright notices and terms. Nothing in this
+LICENSE grants or restricts any right in them:
+
+- code/, examples/, plugins/ and readme.txt: the ForceSeatDI SDK as supplied
+  by MotionSystems.
+- docs/*.pdf: MotionSystems manuals and technical sheets.
+- Copies of the files above bundled into built packages (uofc_hexa/_sdk/).

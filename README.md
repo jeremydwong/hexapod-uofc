@@ -9,6 +9,9 @@
 The vendor DLL/.so files are not in the repo; copy them from the SDK
 (`ForceSeatDI64.dll` on Windows, `ForceSeatDI64.LinuxPC.so` on Linux).
 
+License: proprietary, all rights reserved (see LICENSE). The MotionSystems
+SDK and manuals are excluded and remain under MotionSystems' own terms.
+
 ## Running our Python tools
 
 One uv project at the repo root (`pyproject.toml`, `uv.lock`). Install name

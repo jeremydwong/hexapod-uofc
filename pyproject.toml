@@ -3,6 +3,9 @@ name = "uofc-hexa"
 version = "0.1.0"
 description = "PS-6TL-350 hexapod control, test and reporting tools (UofC balance perturbation rig)"
 readme = "README.md"
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
+classifiers = ["Private :: Do Not Upload"]  # PyPI rejects packages with this classifier
 requires-python = ">=3.12"
 dependencies = [
     "numpy==2.5.3",
