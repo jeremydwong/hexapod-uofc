@@ -87,7 +87,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--library", default=vendor.default_library(),
                         help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
-    parser.add_argument("--serial", help="USB controller S/N (default: the M10 imitator)")
+    parser.add_argument("--serial", help="USB controller S/N; 'any' = first attached device (default: the M10 imitator)")
     parser.add_argument("--synthetic", action="store_true",
                         help="schematic test geometry instead of a device (NOT the PS-6TL-350)")
     parser.add_argument("--heave-step", type=float, default=10.0, help="mm between heights")

@@ -144,7 +144,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--library", default=vendor.default_library(), required=not vendor.default_library(),
                         help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
-    parser.add_argument("--serial", default=lm.M10_SERIAL)
+    transport = parser.add_mutually_exclusive_group()
+    transport.add_argument("--serial", default=lm.M10_SERIAL,
+                           help="USB controller S/N; 'any' = first attached device (default: the M10 imitator)")
+    transport.add_argument("--ip", help="controller IP address, for a controller on Ethernet")
     parser.add_argument("--run-byte", type=int, choices=[0, 1], required=True)
     parser.add_argument("--sequence", default="surge:+250,surge:-250,home,sway:+250,home,sway:-250,home",
                         help="comma-separated waypoints, 'axis:mm' from home or 'home' (sway + is right, surge + is front)")
@@ -177,7 +180,7 @@ def main():
     print("Sequence: lift -> " + " -> ".join(name for name, _ in waypoints) + " -> lower -> park")
     print(f"Test bound ±{args.bound:g} mm; estimated run time {(moves + lift) / 60:.1f} min")
 
-    device = lm.Device(args.library, None, args.serial, args.run_byte, args.max_speed, 0, LIFT_BOUND_MM)
+    device = lm.Device(args.library, args.ip, args.serial, args.run_byte, args.max_speed, 0, LIFT_BOUND_MM)
     rows, states, clock0 = [], [], time.monotonic()
     t0 = lambda: time.monotonic() - clock0
     try:

@@ -54,6 +54,7 @@ class Device:
             "TestConnection": (ct.c_char, [ct.c_void_p, ct.POINTER(ct.c_char)]),
             "GetLicenseStatus": (ct.c_char, [ct.c_void_p, ct.POINTER(ct.c_char)]),
             "GetRecentErrorCode": (ct.c_int32, [ct.c_void_p]),
+            "GetSerialNumber": (ct.c_char, [ct.c_void_p, ct.c_char_p]),
         }
         for name, cls in [("GetPlatformInfo", s.FSDI_PlatformInfo),
                           ("GetTopTablePosPhy", s.FSDI_ActualTopTablePositionPhysical),
@@ -70,7 +71,18 @@ class Device:
             if ip:
                 self.call("ConnectToNetworkDevice", ip.encode("ascii"))
             else:
-                self.call("ConnectToUsbDevice", "", serial)
+                # NULL name, as in the vendor's PrecisePos_CPP_Win; NULL serial = any attached device.
+                wanted = None if serial in (None, "", "any") else serial
+                if self.lib.ForceSeatDI_ConnectToUsbDevice(self.api, None, wanted) != b"\x01":
+                    error = self.lib.ForceSeatDI_GetRecentErrorCode(self.api)
+                    raise RuntimeError(
+                        f"ConnectToUsbDevice failed for serial {wanted or 'any'} (SDK error {error}). "
+                        "Check: ForceSeatPM fully closed (including the tray icon); the controller is "
+                        "connected to this PC by USB; the serial is right (try --serial any). "
+                        "If the controller is on Ethernet, use --ip instead.")
+            sn = ct.create_string_buffer(28)  # FSDI_SerialNumberStringLength
+            if self.lib.ForceSeatDI_GetSerialNumber(self.api, sn) == b"\x01":
+                print(f"Connected to controller S/N {sn.value.decode(errors='replace')}")
             for name in ["TestConnection", "GetLicenseStatus"]:
                 flag = ct.c_char(b"\x00")
                 self.call(name, ct.byref(flag))
