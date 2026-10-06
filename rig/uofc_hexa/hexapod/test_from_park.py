@@ -1,6 +1,9 @@
 """Park-to-park level sequence: lift from soft park to home, visit waypoints, lower back, park.
 
   lift    stream a smoothstep from the reported (parked) pose to (0,0,0) at --lift-rate mm/s
+  check   before anything moves: every point of the planned test path (5 mm spacing) is sent
+          PAUSED with FullMatch, which rejects poses the platform cannot reach. Any rejection
+          stops the run while still parked.
   test    for each --sequence waypoint: smoothstep there at --rate mm/s, rest --rest s.
           Strict gate: unparked, unpaused, reported and commanded translation within ±--bound mm.
   lower   stream back to the pose recorded at start
@@ -24,6 +27,11 @@ from uofc_hexa.hexapod import level_move as lm
 LIFT_BOUND_MM = 170.0  # heave single excursion is -165.8 mm (tech sheet); lift/lower only
 LOWEST_HEAVE_MM = -165.0  # FullMatch rejects the parked pose (-165.65 mm); -165.0 is accepted
 STALL_S = 5.0  # abort lift if the platform has not moved 1 mm after this long
+# Single-axis excursions from home, docs/PS-6TL-350-tech-sheet.pdf p.2 (sway, surge, heave).
+AXIS_LIMITS_MM = {"sway": (-265.3, 265.3), "surge": (-306.0, 273.1), "heave": (-165.8, 189.1)}
+EDGE_MARGIN_MM = 10.0  # waypoints must stay at least this far inside the tech-sheet limits
+BOUND_MARGIN_MM = 15.0  # default --bound = largest waypoint + this
+PRECHECK_STEP_MM = 5.0
 
 
 def lenient_read(device):
@@ -43,8 +51,9 @@ def lenient_read(device):
     rpy = np.array([pose.roll, pose.pitch, pose.yaw], dtype=float)
     if not np.all(np.isfinite(np.r_[xyz, rpy])):
         raise RuntimeError("Nonfinite pose feedback")
-    if np.max(np.abs(xyz)) > LIFT_BOUND_MM or np.max(np.abs(rpy)) > np.deg2rad(lm.TILT_LIMIT_DEG):
-        raise RuntimeError(f"Pose outside ±{LIFT_BOUND_MM} mm / ±{lm.TILT_LIMIT_DEG}° lift bounds")
+    limit = max(device.bound, LIFT_BOUND_MM)  # lift/lower: 170 mm; test phases: --bound
+    if np.max(np.abs(xyz)) > limit or np.max(np.abs(rpy)) > np.deg2rad(lm.TILT_LIMIT_DEG):
+        raise RuntimeError(f"Pose outside ±{limit:g} mm / ±{lm.TILT_LIMIT_DEG}° bounds")
     return xyz, rpy, np.array(list(act.actualMotorPosition), dtype=float), info.state
 
 
@@ -59,6 +68,38 @@ def parse_sequence(text):
             target[lm.AXES[axis]] = float(amount)
         waypoints.append((item.replace(":", " "), target))
     return waypoints
+
+
+def check_axis_limits(waypoints):
+    """Names of waypoints closer than EDGE_MARGIN_MM to a tech-sheet single-axis limit."""
+    bad = []
+    for name, target in waypoints:
+        for axis, (low, high) in AXIS_LIMITS_MM.items():
+            value = target[lm.AXES[axis]]
+            if not low + EDGE_MARGIN_MM <= value <= high - EDGE_MARGIN_MM:
+                bad.append(f"{name} ({axis} {value:+g} mm; limit {low:g}/{high:+g}, margin {EDGE_MARGIN_MM:g})")
+    return bad
+
+
+def precheck_path(device, waypoints):
+    """Send every point of the test path, PAUSED, before anything moves. Returns rejected poses.
+
+    FullMatch makes the SDK reject unreachable poses, so a rejection here means the run would
+    fail mid-motion. Ends with a paused setpoint at home; the lift then streams from the parked
+    pose, so nothing jumps when motion starts.
+    """
+    rejected, last = [], np.zeros(3)
+    for name, target in waypoints:
+        steps = max(1, int(np.ceil(np.max(np.abs(target - last)) / PRECHECK_STEP_MM)))
+        for u in np.linspace(0, 1, steps + 1):
+            pose = last + (target - last) * u
+            try:
+                device.send(pose, pause=True)
+            except RuntimeError:
+                rejected.append((name, np.round(pose, 1)))
+        last = target
+    device.send(np.zeros(3), pause=True)
+    return rejected
 
 
 def stream(device, start, end, rate, phase, t0, rows, states, hold=2., bound=None):
@@ -105,11 +146,12 @@ def main():
                         help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
     parser.add_argument("--serial", default=lm.M10_SERIAL)
     parser.add_argument("--run-byte", type=int, choices=[0, 1], required=True)
-    parser.add_argument("--sequence", default="surge:+30,surge:-30,home,sway:+30,home,sway:-30,home",
+    parser.add_argument("--sequence", default="surge:+250,surge:-250,home,sway:+250,home,sway:-250,home",
                         help="comma-separated waypoints, 'axis:mm' from home or 'home' (sway + is right, surge + is front)")
     parser.add_argument("--rest", type=float, default=3.0, help="seconds to rest at each waypoint")
     parser.add_argument("--rate", type=float, default=10.0, help="test setpoint rate, mm/s")
-    parser.add_argument("--bound", type=float, default=50.0, help="test-phase abort bound, mm (max 150)")
+    parser.add_argument("--bound", type=float,
+                        help=f"test-phase abort bound, mm (default: largest waypoint + {BOUND_MARGIN_MM:g})")
     parser.add_argument("--lift-rate", type=float, default=10.0, help="lift/lower setpoint rate, mm/s")
     parser.add_argument("--max-speed", type=int, default=2000)
     parser.add_argument("--hardware", action="store_true")
@@ -119,11 +161,21 @@ def main():
     if not args.hardware:
         parser.error("--hardware is required")
     waypoints = parse_sequence(args.sequence)
-    if not 0 < args.bound <= lm.MAX_BOUND_MM:
-        parser.error(f"--bound must be in (0, {lm.MAX_BOUND_MM:g}]")
-    if any(np.max(np.abs(target)) >= args.bound for _, target in waypoints):
-        parser.error("every waypoint must be inside --bound")
+    too_close = check_axis_limits(waypoints)
+    if too_close:
+        parser.error("waypoints too close to the platform's limits: " + "; ".join(too_close))
+    largest = max(np.max(np.abs(target)) for _, target in waypoints)
+    if args.bound is None:
+        args.bound = largest + BOUND_MARGIN_MM
+    if not largest < args.bound <= max(abs(v) for lim in AXIS_LIMITS_MM.values() for v in lim):
+        parser.error("--bound must exceed every waypoint and stay within the tech-sheet limits")
+    moves, last = 0.0, np.zeros(3)
+    for _, target in waypoints:
+        moves += max(3., 1.875 * np.max(np.abs(target - last)) / args.rate) + args.rest
+        last = target
+    lift = 2 * (max(3., 1.875 * abs(LOWEST_HEAVE_MM) / args.lift_rate) + 2)
     print("Sequence: lift -> " + " -> ".join(name for name, _ in waypoints) + " -> lower -> park")
+    print(f"Test bound ±{args.bound:g} mm; estimated run time {(moves + lift) / 60:.1f} min")
 
     device = lm.Device(args.library, None, args.serial, args.run_byte, args.max_speed, 0, LIFT_BOUND_MM)
     rows, states, clock0 = [], [], time.monotonic()
@@ -132,6 +184,13 @@ def main():
         parked, _, _, state = lenient_read(device)
         print(f"Start: pose {np.round(parked, 2)} mm, state=0x{state:x}")
         parked[2] = max(parked[2], LOWEST_HEAVE_MM)
+        device.bound = args.bound  # paused path check needs the full test range
+        rejected = precheck_path(device, waypoints)
+        device.bound = LIFT_BOUND_MM
+        if rejected:
+            raise RuntimeError(f"{len(rejected)} path points are unreachable, nothing moved. First: "
+                               + "; ".join(f"{n} at {p}" for n, p in rejected[:3]))
+        print("Path check: every point reachable (paused FullMatch probe)")
         stream(device, parked, np.zeros(3), args.lift_rate, "lift", t0, rows, states)
 
         device.bound, last = args.bound, np.zeros(3)

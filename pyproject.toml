@@ -17,6 +17,8 @@ dependencies = [
 hexapod-move = "uofc_hexa.hexapod.level_move:main"
 hexapod-park-test = "uofc_hexa.hexapod.test_from_park:main"
 hexapod-report = "uofc_hexa.hexapod.report:main"
+hexapod-envelope = "uofc_hexa.hexapod.envelope:main"
+hexapod-envelope-report = "uofc_hexa.hexapod.envelope_report:main"
 
 [build-system]
 requires = ["hatchling"]

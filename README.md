@@ -27,7 +27,14 @@ $env:FORCESEATDI_LIBRARY = "C:\path\to\ForceSeatDI64.dll"   # PowerShell; or pas
 uv run hexapod-park-test --hardware --run-byte 0 --output output/sequence
 uv run hexapod-report --output output/sequence
 uv run hexapod-move --help                # single-axis level move
+uv run hexapod-envelope --report          # reachable sway x surge area per height (paused probe, no motion)
+uv run hexapod-envelope --synthetic --report   # same report from schematic test geometry, no device
 ```
+
+`hexapod-envelope` writes `output/envelope.json` and, with `--report`,
+`output/surge-range-of-motion.html`. Synthetic runs write
+`envelope_synthetic.json` / `surge-range-of-motion_synthetic.html` and are
+watermarked, so they cannot be mistaken for measured limits.
 
 The commands work from any folder inside the repo; `--output` (default
 `output`) is relative to where you run them, and `/output/` at the repo root
