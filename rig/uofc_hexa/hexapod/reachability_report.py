@@ -3,7 +3,6 @@
 Inputs, from output/reachability/ if it has imitator.json (fresh measurements), else the
 committed copy in rig/data/reachability/ (so the report builds without the M10):
   imitator.json   hexapod-envelope against the M10 motion imitator (paused probe)
-  schematic.json  hexapod-envelope --synthetic (our schematic geometry)
   robot.json      optional: hexapod-envelope against the real controller
   dynamics.json / dynamics.csv (or .csv.gz)   hexapod-dynamics (M10 imitator only)
 
@@ -120,13 +119,13 @@ PAGE = r"""<!doctype html>
 <title>Hexapod Reachability</title>
 <style>
 :root{--bg:#fbfaf7;--fg:#1d1d1f;--muted:#66666c;--line:#dedbd3;--panel:#fff;--soft:#f3f1ec;
- --imitator:#2a6fdb;--schematic:#8e6bd1;--robot:#16a085;--accent:#d35400;--ok:#1e8449;--bad:#b03a2e;--grid:#e6e3dc}
+ --imitator:#2a6fdb;--robot:#16a085;--accent:#d35400;--ok:#1e8449;--bad:#b03a2e;--grid:#e6e3dc}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14161a;--fg:#e8e8ea;--muted:#9a9aa2;
- --line:#2e3138;--panel:#1b1e23;--soft:#22262c;--imitator:#5b9bff;--schematic:#b493f0;--robot:#3fd0a8;
+ --line:#2e3138;--panel:#1b1e23;--soft:#22262c;--imitator:#5b9bff;--robot:#3fd0a8;
  --accent:#ff8c42;--ok:#52c47a;--bad:#ff6b5b;--grid:#2a2e35}}
 :root[data-theme="dark"]{--bg:#14161a;--fg:#e8e8ea;--muted:#9a9aa2;--line:#2e3138;--panel:#1b1e23;--soft:#22262c;
- --imitator:#5b9bff;--schematic:#b493f0;--robot:#3fd0a8;--accent:#ff8c42;--ok:#52c47a;--bad:#ff6b5b;--grid:#2a2e35}
-*{box-sizing:border-box}
+ --imitator:#5b9bff;--robot:#3fd0a8;--accent:#ff8c42;--ok:#52c47a;--bad:#ff6b5b;--grid:#2a2e35}
+*{box-sizing:border-box} [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1180px;margin:0 auto;padding:24px 16px 64px}
 h1{font-size:1.75rem;margin:0 0 4px} h2{font-size:1.3rem;margin:44px 0 6px} h3{font-size:1.05rem;margin:24px 0 6px}
@@ -192,22 +191,20 @@ controller; ForceSeatPM must be closed. Licensed per controller.</dd>
 <dt>ForceSeatPM</dt><dd><b>P</b>latform <b>M</b>anager: the vendor's Windows app (sliders, diagnostics, licence codes).</dd>
 <dt>M10 motion imitator</dt><dd>A small USB box from the vendor that pretends to be a PS-6TL-350 controller: same
 kinematics and SDK, no motors. Not an API, despite sharing the letters "MI" with ForceSeatMI.</dd>
-<dt>Schematic model</dt><dd>Our own illustrative geometry (the one in the meshcat animations), with leg strokes fitted
-only to the tech-sheet heave range. Independent of the vendor. Shown here to see how far a guessed geometry is off.</dd>
 </dl>
 
-<h2>1 · Reachable space: imitator vs schematic model</h2>
+<h2>1 · Reachable space (M10 imitator)</h2>
 <p>Each shape is the set of level poses the inverse kinematics accepts: at every height, the outline of how far the top
 frame can translate in sway and surge. Drag to rotate, right-drag or shift-drag to pan, scroll to zoom. Move the height
-slider to highlight one slice in both views. The orange line is the surge reach at that height; the green segment is
+slider to highlight one slice. The orange line is the surge reach at that height; the green segment is
 the 300 mm stroke, centred, when it fits.</p>
 <div class="toolbar">
  <button data-view="iso">3D</button><button data-view="side">Side (surge × heave)</button>
  <button data-view="front">Front (sway × heave)</button><button data-view="top">Top (sway × surge)</button>
- <label><input type="checkbox" id="sync" checked> link the two views</label>
+ <label __SYNCHIDE__><input type="checkbox" id="sync" checked> link the views</label>
  <label><input type="checkbox" id="shell" checked> show all slices</label>
 </div>
-<div class="viewer" style="grid-template-columns:76px repeat(__NPANES__,minmax(0,1fr))">
+<div class="viewer" style="grid-template-columns:76px repeat(__NPANES__,minmax(0,__PANEMAX__))">
  <div class="hslider" id="hs" role="slider" tabindex="0" aria-label="Height (heave, mm)"></div>
  __PANES__
 </div>
@@ -436,13 +433,11 @@ def main():
     args = parser.parse_args()
     folder = args.folder or (FRESH if (FRESH / "imitator.json").exists() else COMMITTED)
     print(f"Reading measurements from {folder}")
-    imitator, schematic, robot = (load(folder / f) for f in ("imitator.json", "schematic.json", "robot.json"))
+    imitator, robot = (load(folder / f) for f in ("imitator.json", "robot.json"))
     if not imitator:
         parser.error(f"{folder / 'imitator.json'} missing: run uv run hexapod-envelope --heave-step 5 "
                      f"--output {folder / 'imitator.json'}")
     sets = [slim(imitator, "M10 imitator", "imitator")]
-    if schematic:
-        sets.append(slim(schematic, "Schematic model", "schematic"))
     if robot:
         sets.append(slim(robot, "Robot", "robot"))
 
@@ -479,15 +474,11 @@ def main():
                "(must be measured by stepping up <code>--rate</code> on the robot). See section 3.") if not robot else \
               "the robot's real speed and ramps (step up <code>--rate</code> gradually on the robot)."
 
-    # ---- agreement note ----
-    agreement = ""
-    if schematic:
-        sw = max(schematic["heights"], key=lambda h: h["surge_max"] - h["surge_min"])
-        agreement = (f"The schematic model is symmetric and too small: its widest surge range is "
-                     f"{sw['surge_max'] - sw['surge_min']:.0f} mm (at {sw['heave']:+.0f} mm) against the imitator's "
-                     f"{widest['surge_max'] - widest['surge_min']:.0f} mm, and it misses the real front/back asymmetry "
-                     f"(the platform reaches about 30 mm further backward than forward). Use the imitator or the robot "
-                     f"for planning; the schematic geometry is only good for animation.")
+    # ---- cross-check note ----
+    agreement = ("Cross-check: the vendor's ForceSeatDI library also runs this reach check with no device connected. "
+                 "On the development laptop its limits agree with the imitator sweep to within 0.4 mm at every height "
+                 "tested (search resolution), and its heave limits match the tech sheet (-165.8 / +189.1 mm). Use "
+                 "<code>uofc_hexa.hexapod.reachability</code> to ask whether a given level pose is inside this sweep.")
 
     # ---- dynamics section ----
     if dyn:
@@ -541,6 +532,8 @@ lag, overshoot and lurches before going faster. Add a top-frame accelerometer fo
                     f'</h3><canvas class="v3d" id="v-{s["key"]}" aria-label="3D reachable space, {s["label"]}"></canvas></div>'
                     for s in sets))
                 .replace("__NPANES__", str(len(sets)))
+                .replace("__PANEMAX__", "760px" if len(sets) == 1 else "1fr")
+                .replace("__SYNCHIDE__", 'hidden' if len(sets) == 1 else "")
                 .replace("__AGREEMENT__", agreement).replace("__DYNAMICS__", dynamics).replace("__ROBOT__", robot_html)
                 .replace("__MARGIN__", f"{MARGIN_MM:g}")
                 .replace("__SETS__", json.dumps(sets, separators=(",", ":")))

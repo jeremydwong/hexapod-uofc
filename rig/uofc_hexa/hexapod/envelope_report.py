@@ -57,9 +57,6 @@ def make_gif(data, extent):
     side.set_xlabel("surge (mm, + front)"); side.set_ylabel("heave (mm)"); side.grid(alpha=0.3)
     side.set_title("Surge range vs height", fontsize=10)
     title = fig.suptitle("", fontsize=11)
-    if data.get("synthetic"):
-        fig.text(0.5, 0.5, "SYNTHETIC: NOT THE PS-6TL-350", ha="center", va="center", rotation=20,
-                 fontsize=26, color="#c0392b", alpha=0.18, weight="bold")
 
     order = list(range(len(hs))) + list(range(len(hs) - 2, 0, -1))  # up, then back down: seamless loop
     home = int(np.argmin(np.abs(heave)))
@@ -240,8 +237,7 @@ show(+slider.value);
 
 
 def default_report_path(data, folder=Path("output")):
-    """Synthetic reports get their own name, so they never overwrite a measured one."""
-    return folder / ("surge-range-of-motion_synthetic.html" if data.get("synthetic") else "surge-range-of-motion.html")
+    return folder / "surge-range-of-motion.html"
 
 
 def build(input_path, output_path=None):
@@ -254,12 +250,7 @@ def build(input_path, output_path=None):
     extent = float(np.ceil(max(max(h["radius"]) for h in hs) / 50.0) * 50.0)
     best = max(hs, key=lambda h: h["surge_max"] - h["surge_min"])
     warning = ""
-    if data.get("synthetic"):
-        warning = ('<div class="warn"><b>Synthetic data.</b> This page was generated from the schematic '
-                   'animation geometry to test the report, not from the PS-6TL-350. Do not use these numbers '
-                   'for planning. Run <code>uv run hexapod-envelope</code> against the M10 or the platform '
-                   'controller for real limits.</div>')
-    page = (PAGE.replace("__SOURCE__", html.escape(data["source"]))
+    page =(PAGE.replace("__SOURCE__", html.escape(data["source"]))
                 .replace("__DATE__", html.escape(data["date"]))
                 .replace("__RES__", f"{data['resolution_mm']:g}")
                 .replace("__NDIR__", str(len(data["directions_deg"])))
@@ -278,9 +269,9 @@ def build(input_path, output_path=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", type=Path, default=Path("output") / "envelope.json",
-                        help="JSON from hexapod-envelope (synthetic: output/envelope_synthetic.json)")
+                        help="JSON from hexapod-envelope")
     parser.add_argument("--output", type=Path,
-                        help="default: surge-range-of-motion.html (or _synthetic.html) next to the input")
+                        help="default: surge-range-of-motion.html next to the input")
     args = parser.parse_args()
     try:
         build(args.input, args.output)

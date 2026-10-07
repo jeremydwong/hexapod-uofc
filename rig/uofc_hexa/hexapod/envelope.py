@@ -12,14 +12,10 @@ parked heave of -165.65 mm). Nothing moves. The last command is a paused pose ne
 park (heave -165.0 mm), the pose test_from_park.py starts from. Afterwards the
 controller may report "paused" rather than "parked".
 
---synthetic instead uses the schematic geometry from report.py with leg strokes fitted
-to the tech-sheet heave range. It is NOT the PS-6TL-350 and exists only to exercise
-the report; its output is labelled synthetic.
-
 Run: uv run hexapod-envelope --report                       M10 imitator (default serial)
      uv run hexapod-envelope --serial <S/N> --report        platform controller
-     uv run hexapod-envelope --synthetic --report           no device, schematic test data
-(ForceSeatPM closed for the device runs.)
+(ForceSeatPM closed.) To ask "is this pose reachable?" from a saved sweep, see
+uofc_hexa.hexapod.reachability.
 """
 from __future__ import annotations
 
@@ -35,7 +31,6 @@ from uofc_hexa import vendor
 
 SEARCH_MM = 400.0  # beyond any single-axis excursion in the tech sheet
 PARK_SAFE_HEAVE_MM = -165.0
-HEAVE_LIMITS_MM = (-165.8, 189.1)  # tech sheet, used only by the synthetic model
 
 
 def directions(count):
@@ -65,62 +60,37 @@ def outline_stats(radius, angles_deg):
             "area_cm2": float(area / 100.0)}
 
 
-def synthetic_reachable():
-    """Leg-length check on the schematic report.py geometry (NOT the PS-6TL-350)."""
-    from uofc_hexa.hexapod.report import BASE_Z, NEUTRAL_H, joints
-    base, top = joints()
-    lift = BASE_Z + NEUTRAL_H
-
-    def lengths(sway, surge, heave):
-        offset = np.array([surge, -sway, heave]) / 1000.0  # same axes as the report animation
-        return np.linalg.norm(top + offset + [0, 0, lift] - base, axis=1)
-
-    l_min = lengths(0, 0, HEAVE_LIMITS_MM[0]).min()
-    l_max = lengths(0, 0, HEAVE_LIMITS_MM[1]).max()
-    def reachable(sway, surge, heave):
-        legs = lengths(sway, surge, heave)
-        return bool(np.all((legs >= l_min - 1e-9) & (legs <= l_max + 1e-9)))
-    return reachable
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--library", default=vendor.default_library(),
                         help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
     parser.add_argument("--serial", help="USB controller S/N; 'any' = first attached device (default: the M10 imitator)")
-    parser.add_argument("--synthetic", action="store_true",
-                        help="schematic test geometry instead of a device (NOT the PS-6TL-350)")
     parser.add_argument("--heave-step", type=float, default=10.0, help="mm between heights")
     parser.add_argument("--directions", type=int, default=72, help="directions per height (multiple of 4)")
     parser.add_argument("--resolution", type=float, default=1.0, help="mm, binary search stop")
     parser.add_argument("--output", type=Path,
-                        help="JSON path (default: output/envelope.json, or output/envelope_synthetic.json)")
+                        help="JSON path (default: output/envelope.json)")
     parser.add_argument("--report", action="store_true",
-                        help="also build surge-range-of-motion.html (or _synthetic.html) next to the JSON")
+                        help="also build surge-range-of-motion.html next to the JSON")
     args = parser.parse_args()
     if args.output is None:
-        args.output = Path("output") / ("envelope_synthetic.json" if args.synthetic else "envelope.json")
+        args.output = Path("output") / "envelope.json"
     if args.directions % 4:
         parser.error("--directions must be a multiple of 4, so the pure surge and sway axes are included")
 
-    device = None
-    if args.synthetic:
-        reachable = synthetic_reachable()
-        source = "synthetic: schematic geometry, NOT the PS-6TL-350"
-    else:
-        if not args.library:
-            parser.error(f"--library or ${vendor.LIBRARY_ENV} is required for a device probe")
-        from uofc_hexa.hexapod import level_move as lm
-        serial = args.serial or lm.M10_SERIAL
-        device = lm.Device(args.library, None, serial, 0, 2000, 0, SEARCH_MM)
-        source = f"measured: paused FullMatch probe, controller S/N {serial}"
+    if not args.library:
+        parser.error(f"--library or ${vendor.LIBRARY_ENV} is required")
+    from uofc_hexa.hexapod import level_move as lm
+    serial = args.serial or lm.M10_SERIAL
+    device = lm.Device(args.library, None, serial, 0, 2000, 0, SEARCH_MM)
+    source = f"measured: paused FullMatch probe, controller S/N {serial}"
 
-        def reachable(sway, surge, heave):
-            try:
-                device.send(np.array([sway, surge, heave]), pause=True)  # paused: nothing moves
-                return True
-            except RuntimeError:
-                return False
+    def reachable(sway, surge, heave):
+        try:
+            device.send(np.array([sway, surge, heave]), pause=True)  # paused: nothing moves
+            return True
+        except RuntimeError:
+            return False
 
     angles = directions(args.directions)
     heights = []
@@ -136,13 +106,11 @@ def main():
             heights.append({"heave": float(heave), "radius": [round(float(r), 2) for r in radius], **stats})
             print(f"{heave:6.0f}   {stats['surge_min']:9.1f}  {stats['surge_max']:9.1f}  "
                   f"{stats['sway_min']:8.1f}  {stats['sway_max']:8.1f}  {stats['area_cm2']:9.0f}")
-        if device:
-            reachable(0.0, 0.0, PARK_SAFE_HEAVE_MM)  # leave a harmless paused setpoint near park
+        reachable(0.0, 0.0, PARK_SAFE_HEAVE_MM)  # leave a harmless paused setpoint near park
     finally:
-        if device:
-            device.close()
+        device.close()
 
-    result = {"source": source, "synthetic": args.synthetic, "date": datetime.now().isoformat(timespec="seconds"),
+    result = {"source": source, "date": datetime.now().isoformat(timespec="seconds"),
               "resolution_mm": args.resolution, "directions_deg": [float(a) for a in angles],
               "probe_seconds": round(time.monotonic() - start, 1), "heights": heights}
     args.output.parent.mkdir(parents=True, exist_ok=True)

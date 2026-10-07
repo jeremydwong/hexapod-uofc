@@ -30,13 +30,14 @@ uv run hexapod-park-test --hardware --run-byte 0 --output output/sequence
 uv run hexapod-report --output output/sequence
 uv run hexapod-move --help                # single-axis level move
 uv run hexapod-envelope --report          # reachable sway x surge area per height (paused probe, no motion)
-uv run hexapod-envelope --synthetic --report   # same report from schematic test geometry, no device
 ```
 
 `hexapod-envelope` writes `output/envelope.json` and, with `--report`,
-`output/surge-range-of-motion.html`. Synthetic runs write
-`envelope_synthetic.json` / `surge-range-of-motion_synthetic.html` and are
-watermarked, so they cannot be mistaken for measured limits.
+`output/surge-range-of-motion.html`. To ask whether a level pose is reachable without a
+device, use the saved M10 sweep: `from uofc_hexa.hexapod.reachability import Reachability`
+(`Reachability.load().reachable(sway, surge, heave)`; 10 mm safety margin by default).
+`uv run hexapod-reachability-report --folder rig/data/reachability --output reports/hexapod-reachability.html`
+rebuilds the shareable report.
 
 The commands work from any folder inside the repo; `--output` (default
 `output`) is relative to where you run them, and `/output/` at the repo root
