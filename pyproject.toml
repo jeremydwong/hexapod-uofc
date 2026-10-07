@@ -19,6 +19,10 @@ hexapod-park-test = "uofc_hexa.hexapod.test_from_park:main"
 hexapod-report = "uofc_hexa.hexapod.report:main"
 hexapod-envelope = "uofc_hexa.hexapod.envelope:main"
 hexapod-envelope-report = "uofc_hexa.hexapod.envelope_report:main"
+hexapod-dynamics = "uofc_hexa.hexapod.dynamics:main"
+hexapod-reachability-report = "uofc_hexa.hexapod.reachability_report:main"
+hexapod-live = "uofc_hexa.expt.live_view:main"
+hexapod-expt-emulator = "uofc_hexa.expt.emulator:main"
 
 [build-system]
 requires = ["hatchling"]

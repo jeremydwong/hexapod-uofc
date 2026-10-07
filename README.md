@@ -9,6 +9,8 @@
 The vendor DLL/.so files are not in the repo; copy them from the SDK
 (`ForceSeatDI64.dll` on Windows, `ForceSeatDI64.LinuxPC.so` on Linux).
 
+Progress and the next lab steps: LABLOG.md.
+
 License: proprietary, all rights reserved (see LICENSE). The MotionSystems
 SDK and manuals are excluded and remain under MotionSystems' own terms.
 

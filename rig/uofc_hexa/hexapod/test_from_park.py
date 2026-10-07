@@ -34,7 +34,7 @@ BOUND_MARGIN_MM = 15.0  # default --bound = largest waypoint + this
 PRECHECK_STEP_MM = 5.0
 
 
-def lenient_read(device):
+def lenient_read(device, tilt_limit_deg=lm.TILT_LIMIT_DEG):
     """Like Device.read but allows park/pause bits (lift starts parked); still aborts on errors and tilt."""
     s = device.s
     info = lm.sized(s.FSDI_PlatformInfo)
@@ -52,8 +52,8 @@ def lenient_read(device):
     if not np.all(np.isfinite(np.r_[xyz, rpy])):
         raise RuntimeError("Nonfinite pose feedback")
     limit = max(device.bound, LIFT_BOUND_MM)  # lift/lower: 170 mm; test phases: --bound
-    if np.max(np.abs(xyz)) > limit or np.max(np.abs(rpy)) > np.deg2rad(lm.TILT_LIMIT_DEG):
-        raise RuntimeError(f"Pose outside ±{limit:g} mm / ±{lm.TILT_LIMIT_DEG}° bounds")
+    if np.max(np.abs(xyz)) > limit or np.max(np.abs(rpy)) > np.deg2rad(tilt_limit_deg):
+        raise RuntimeError(f"Pose outside ±{limit:g} mm / ±{tilt_limit_deg:g}° bounds")
     return xyz, rpy, np.array(list(act.actualMotorPosition), dtype=float), info.state
 
 
