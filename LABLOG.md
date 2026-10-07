@@ -19,6 +19,9 @@ Newest entry first. What was done, what is known, what to try next.
   stalls of 65–130 ms show up as lurches in fast streamed moves.
 - **Report:** `uv run hexapod-reachability-report` → `output/reachability/hexapod-reachability.html`
   (3D imitator vs schematic model, mm height slider, side view, speed section, API table).
+  The measurements behind it are committed in `rig/data/reachability/` (imitator, schematic,
+  speed tests; CSV gzipped), so the report rebuilds on any machine without the M10. Fresh
+  measurements in `output/reachability/` take precedence.
 - **Experiment FSM:** `rig/speedgoat/` (fsm_expt, cop_from_plates, pack_state, trial CSV,
   desktop test, wiring README) and host tools `hexapod-live` (live UDP plot) and
   `hexapod-expt-emulator`. Python mirror tested end to end (1–2 kHz, no lost packets).

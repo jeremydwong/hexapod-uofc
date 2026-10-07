@@ -1,10 +1,11 @@
 """Build hexapod-reachability.html: where can we do ~30 cm surges, and how fast?
 
-Inputs (output/reachability/ by default):
+Inputs, from output/reachability/ if it has imitator.json (fresh measurements), else the
+committed copy in rig/data/reachability/ (so the report builds without the M10):
   imitator.json   hexapod-envelope against the M10 motion imitator (paused probe)
   schematic.json  hexapod-envelope --synthetic (our schematic geometry)
   robot.json      optional: hexapod-envelope against the real controller
-  dynamics.json / dynamics.csv   hexapod-dynamics (M10 imitator only)
+  dynamics.json / dynamics.csv (or .csv.gz)   hexapod-dynamics (M10 imitator only)
 
 Run: uv run hexapod-reachability-report
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
+import gzip
 import html
 import io
 import json
@@ -20,6 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
+FRESH = Path("output") / "reachability"
+COMMITTED = Path(__file__).resolve().parents[2] / "data" / "reachability"  # rig/data/reachability
 STROKE_MM = 300.0
 MARGIN_MM = 25.0  # each end, for "300 mm fits comfortably"
 SPEC = {"surge_v": 680.0, "surge_a_g": 0.66, "sway_v": 700.0, "sway_a_g": 0.5,
@@ -54,7 +58,9 @@ def dynamics_plots(csv_path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    rows = list(csv.DictReader(csv_path.open()))
+    opener = gzip.open if csv_path.suffix == ".gz" else open
+    with opener(csv_path, "rt", newline="") as stream:
+        rows = list(csv.DictReader(stream))
     by = {}
     for r in rows:
         by.setdefault(r["test"], []).append(r)
@@ -424,10 +430,12 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--folder", type=Path, default=Path("output") / "reachability")
+    parser.add_argument("--folder", type=Path,
+                        help=f"input folder (default: {FRESH} if it has imitator.json, else {COMMITTED})")
     parser.add_argument("--output", type=Path, help="default: <folder>/hexapod-reachability.html")
     args = parser.parse_args()
-    folder = args.folder
+    folder = args.folder or (FRESH if (FRESH / "imitator.json").exists() else COMMITTED)
+    print(f"Reading measurements from {folder}")
     imitator, schematic, robot = (load(folder / f) for f in ("imitator.json", "schematic.json", "robot.json"))
     if not imitator:
         parser.error(f"{folder / 'imitator.json'} missing: run uv run hexapod-envelope --heave-step 5 "
@@ -483,7 +491,8 @@ def main():
 
     # ---- dynamics section ----
     if dyn:
-        steps_png, stall_png = dynamics_plots(folder / "dynamics.csv")
+        csv_path = folder / "dynamics.csv"
+        steps_png, stall_png = dynamics_plots(csv_path if csv_path.exists() else folder / "dynamics.csv.gz")
         rows = "".join(
             f"<tr><td>{t['test']}</td><td>{t['settle_1mm_s']:.3f}</td><td>{t['rise_10_90_s']:.3f}</td>"
             f"<td>{t['peak_speed_mm_s']:.0f}</td><td>{t['peak_accel_g']:.2f}</td><td>{t['peak_tilt_deg']:.2f}</td>"
@@ -537,7 +546,8 @@ lag, overshoot and lurches before going faster. Add a top-frame accelerometer fo
                 .replace("__SETS__", json.dumps(sets, separators=(",", ":")))
                 .replace("__STROKE__", f"{STROKE_MM:g}")
                 .replace("__SPECHOME__", json.dumps(list(SPEC["home_surge"]))))
-    out = args.output or folder / "hexapod-reachability.html"
+    out = args.output or FRESH / "hexapod-reachability.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page, encoding="utf-8")
     print(f"Wrote {out} ({out.stat().st_size / 1e6:.2f} MB)")
 
