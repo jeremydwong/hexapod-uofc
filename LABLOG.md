@@ -2,6 +2,32 @@
 
 Newest entry first. What was done, what is known, what to try next.
 
+## 2026-10-08: transient tilt during fast moves, and what the force plates can tell us
+
+- **The 0.5° tilt guard** (`TILT_LIMIT_DEG` in `level_move.py`, used by `hexapod-park-test`)
+  is an abort threshold on the SDK-reported roll/pitch/yaw; we always command zero rotation.
+  On the M10, smooth 300 mm moves in 0.7–1.0 s reported 0.18–0.44° and a 0.5 s move 0.46°,
+  so fast runs on the robot may trip it mid-move. To do: a `--tilt-limit` option (default
+  0.5°) so fast runs can raise it deliberately and report the peak.
+- **Cause:** the six actuator servos lag their targets by different amounts during fast
+  moves, so the top frame twists in transit. The reported tilt is forward kinematics of
+  the measured actuator positions, not a measurement of the frame.
+- **Ways to reduce it, in order:** gentler profiles (longer, or higher-order S-curves); try
+  the controller's acceleration profiles on the robot (the M10 ignores them); iterative
+  learning control: repeat a profile, record the reported tilt, feed back the opposite
+  roll/pitch/yaw (lag-shifted) as feedforward until it converges, learnt with a
+  representative load. Not recommended: real-time tilt feedback, or per-actuator commands
+  via `SendActuatorsPosLog` (needs confidential geometry, bypasses the vendor checks).
+- **Force plates cannot separate tilt from acceleration** (tilt shows as shear W·θ, about
+  6 N for 0.5° on 700 N; a 0.15 g acceleration shows as about 105 N in the same channels).
+  They are fine for static tilt with an inert load, not mid-move or with a person on them.
+- **Plate inertial artefact:** the plates' own top mass produces forces during
+  accelerations even when unloaded, so force and CoP during perturbations contain an
+  artefact. Correct by subtracting unloaded recordings of each profile, or with an
+  accelerometer. Together with true onset timing and frame tilt, this argues for a small
+  IMU (gyro + accelerometer) on the top frame, logged on the Speedgoat. Raise with Ryan
+  and Tyler: what transient tilt is acceptable for the paradigm?
+
 ## 2026-10-07: where we are, and the Ethernet checklist for tomorrow
 
 ### Done
