@@ -32,6 +32,10 @@ AXIS_LIMITS_MM = {"sway": (-265.3, 265.3), "surge": (-306.0, 273.1), "heave": (-
 EDGE_MARGIN_MM = 10.0  # waypoints must stay at least this far inside the tech-sheet limits
 BOUND_MARGIN_MM = 15.0  # default --bound = largest waypoint + this
 PRECHECK_STEP_MM = 5.0
+# A Windows hiccup can stall one loop iteration ~200 ms (seen 2026-10-20 while lowering the platform).
+# The controller just holds the last setpoint meanwhile, so stalls up to this long are logged and
+# ridden out; the slew step uses at most 2 loop periods, so the command never jumps after one.
+STALL_ABORT_S = 0.5
 
 
 def lenient_read(device, tilt_limit_deg=lm.TILT_LIMIT_DEG):
@@ -115,9 +119,12 @@ def stream(device, start, end, rate, phase, t0, rows, states, hold=2., bound=Non
         for k in range(int((duration + hold) / lm.DT) + 1):
             time.sleep(max(0, begin + k * lm.DT - time.monotonic()))
             now = time.monotonic()
-            if k and now - previous > lm.DEADLINE_S:
-                raise RuntimeError("Control deadline missed")
-            dt, previous, t = (now - previous if k else lm.DT), now, now - begin
+            gap = now - previous
+            if k and gap > STALL_ABORT_S:
+                raise RuntimeError(f"Control loop stalled {1000 * gap:.0f} ms")
+            if k and gap > lm.DEADLINE_S:
+                print(f"{phase}: loop stalled {1000 * gap:.0f} ms; setpoint held, continuing", file=sys.stderr)
+            dt, previous, t = (min(gap, 2 * lm.DT) if k else lm.DT), now, now - begin
             actual, rpy, actuators, state = lenient_read(device)
             if bound is not None:
                 if state & (lm.STATE_PAUSED | lm.STATE_PARK_MASK):

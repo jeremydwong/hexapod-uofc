@@ -9,7 +9,9 @@ the ForceSeatDI SDK, a Windows DLL, and the Speedgoat runs QNX. So the host forw
                  state packet's setpoint, slew-limit it, send it. Stale stream (> STALE_HOLD_S)
                  holds the last command; > STALE_FAULT_S, a Speedgoat FAULT, or any SDK/limit
                  error pauses the platform and faults the relay.
-  after the run  stream from the last command back to the parked pose, then Park.
+  after the run  stream from the last command down to the park height, then Park.
+Loop stalls under tfp.STALL_ABORT_S (Windows hiccups) hold the last command and are counted;
+the slew step uses at most 2 loop periods, so the command never jumps after one.
 
 The Speedgoat stays the clock and the record of what was commanded; the relay adds what was
 sent and what the SDK reported (relay rows, saved next to the state stream).
@@ -48,7 +50,8 @@ def protocol_waypoints(trials):
 class Relay(threading.Thread):
     """Lift on prepare(); run() streams the Speedgoat setpoint until stop; finish() lowers and parks."""
 
-    def __init__(self, device, rx, trials, lift_rate=10.0, margin_mm=tfp.BOUND_MARGIN_MM):
+    def __init__(self, device, rx, trials, lift_rate=10.0, margin_mm=tfp.BOUND_MARGIN_MM,
+                 tilt_limit_deg=lm.TILT_LIMIT_DEG):
         super().__init__(daemon=True)
         self.device, self.rx = device, rx
         self.waypoints = protocol_waypoints(trials)
@@ -56,13 +59,15 @@ class Relay(threading.Thread):
         if too_close:
             raise ValueError("protocol targets too close to the platform's limits: " + "; ".join(too_close))
         self.bound = max(np.max(np.abs(w)) for _, w in self.waypoints) + margin_mm
-        self.lift_rate = lift_rate
+        self.lift_rate, self.tilt_limit = lift_rate, tilt_limit_deg
+        self.stalls = []  # (time s, gap ms) of loop iterations over lm.DEADLINE_S
         self.ready = False  # homed and streaming: Start may be sent
         self.fault = None  # message, once the relay has paused the platform
         self.running = True
         self.rows, self.log, self.states = [], [], []
         self.parked = None
         self.command = np.zeros(3)
+        self.pose = None  # latest SDK report (xyz mm, rpy rad, state), for the live view's 3D panel
         self.clock0 = time.monotonic()
 
     def t(self):
@@ -74,7 +79,7 @@ class Relay(threading.Thread):
         parked, _, _, state = tfp.lenient_read(d)
         print(f"Hexapod start: pose {np.round(parked, 2)} mm, state=0x{state:x}")
         parked[2] = max(parked[2], tfp.LOWEST_HEAVE_MM)
-        self.parked = parked
+        self.parked = np.array([0.0, 0.0, tfp.LOWEST_HEAVE_MM])  # always end at the park height
         d.bound = self.bound
         rejected = tfp.precheck_path(d, self.waypoints)
         d.bound = tfp.LIFT_BOUND_MM
@@ -97,10 +102,15 @@ class Relay(threading.Thread):
                 k += 1
                 time.sleep(max(0.0, begin + k * dt_nom - time.monotonic()))
                 now = time.monotonic()
-                if now - previous > lm.DEADLINE_S:
-                    raise RuntimeError(f"relay loop stalled {1000 * (now - previous):.0f} ms")
-                dt, previous = now - previous, now
-                actual, rpy, _, state = tfp.lenient_read(d)
+                gap = now - previous
+                if gap > tfp.STALL_ABORT_S:
+                    raise RuntimeError(f"relay loop stalled {1000 * gap:.0f} ms")
+                if gap > lm.DEADLINE_S:
+                    self.stalls.append((self.t(), 1000 * gap))
+                    print(f"relay: loop stalled {1000 * gap:.0f} ms; command held, continuing", file=sys.stderr)
+                dt, previous = min(gap, 2 * dt_nom), now
+                actual, rpy, _, state = tfp.lenient_read(d, self.tilt_limit)
+                self.pose = (actual, rpy, state)
                 if state & (lm.STATE_PAUSED | lm.STATE_PARK_MASK):
                     raise RuntimeError(f"hexapod paused or parked during the run; state=0x{state:x}")
                 if np.max(np.abs(actual)) > self.bound:

@@ -2,6 +2,74 @@
 
 Newest entry first. What was done, what is known, what to try next.
 
+## 2026-10-20: Speedgoat app live, first platform motion, USB link drops pose reads
+
+### Done
+
+- **Speedgoat `expt_rt` built and running** on TargetPC1 (192.168.7.5), R2025b. Fixes needed on the
+  way: UDP blocks live in `slrealtimeiplib`; receive width is `rcvWidth`; UDP Send has a Length
+  input (double, 312); both UDP blocks need `useHostTargetConn` (the 10.10.10.x default fails at
+  start); the IO324 Analog input has **one output port per channel**, so a Mux builds the 12-wide
+  vector (before, only AI 1 reached the CoP block). Host gets 1000 packets/s, 0 lost.
+- **Host firewall:** the Speedgoat cable is a Public network and uv's python.exe had inbound
+  Block rules (from a cancelled prompt). Disabled them; added an allow rule for UDP 25000 from
+  192.168.7.5 only.
+- **Tare + gate:** load cells zeroed over the first 2 s after app start (plates must be empty);
+  perturbation waits for a centred CoP; below `P.noise_floor_N` (empty plates) both CoP gates
+  pass. Zero check with amplifiers on: all 12 channels within ±0.9 mV, SD ~0.2 mV.
+- **Channel map:** the professor's ReadForcePlates.slx (identical to `simulink/`) reads only AI 3;
+  its unsaved Aug 31 autosave (the version last built) reads AI 1-12 as two scopes of 6. No
+  volts-to-force mapping anywhere on the PC (`ReadForcePlatescal.mat` is the code generator's
+  empty parameter file). A y-push moved AI 2 and AI 8, so assumed order Fx Fy Fz Mx My Mz holds
+  for Fy; **AI 1-6 = right plate, AI 7-12 = left**. `C` still `eye(6)`.
+- **Real platform over USB:** connects with `--serial any` (S/N 3a0034-001551-303338-353336;
+  enumerates as ForceSeatMP1, like the M10). Parked = state 0x52, heave -165.65 mm.
+- **First motion under our software:** `hexapod-park-test --run-byte 0 --serial any --sequence
+  "surge:+10,home"`: lift, +10.00 mm, home all clean (10.0 ms loops). **Run byte 0 = run on the
+  PS-6TL-350.** The lower then aborted on one 212 ms loop stall (paused at heave -32.5 mm);
+  lowered and parked by hand-run script.
+- **Live view:** `hexapod-live --pose` adds a 3D platform panel (SDK pose read-only, Speedgoat
+  setpoint as a ghost, RGB right/front/up triad; footprint and heights from the tech sheet, top
+  size estimated, legs schematic). Analog legend labelled R/L Fx..Mz.
+- **Protocols:** `experiments/demo_one.json` (+50 mm at 100 mm/s) and `demo_fast.json` (+100 mm at
+  500 mm/s = 74% of the 680 mm/s maximum; 0.375 s, 0.42 G). Dry runs on the Speedgoat (platform
+  untouched) match the plan exactly.
+- **Relay / one-liner:** `uv run hexapod-expt-run --hexapod --protocol experiments/demo_fast.json`
+  (defaults: serial any, run byte 0, maxSpeed 65535, tilt abort 1.0 deg, DLL found under
+  ~/Documents/MotionSystems). Loop stalls under 0.5 s are held and logged; lowers to the park
+  height at the end.
+
+### Problem: pose/actuator reads fail with SDK error 2
+
+The fast run aborted 8 s into the lift (heave -164.75 mm, paused) after three ~200 ms stalls:
+`GetActuatorsPosLog failed; SDK error 2`. Afterwards every `GetTopTablePosPhy` and
+`GetActuatorsPosLog` fails with error 2 in any new connection; `GetPlatformInfo` still works and
+reports no module error. A USB replug clears it. Tests after the replug:
+
+- Reads only, 30 s at 100 Hz: 9000 calls, max 1.7 ms, no failures.
+- Paused sends at the parked pose (no motion): state 0x52 -> 0x11, then reads fail with error 2
+  again, until the next replug.
+
+**Likely cause:** the Windows services **MotionSystems Com64** and **MotionSystems AppWatcher64**
+(ForceSeatPM's background services) are running and probably share the USB device with our
+ForceSeatDI connection. Closing the ForceSeatPM window and tray icon does not stop them. The
+controller is not on Ethernet (10.1.1.75 unreachable); the Speedgoat only talks to the host.
+
+### Next
+
+1. Admin PowerShell: `Stop-Service -DisplayName "MotionSystems Com64", "MotionSystems AppWatcher64"`,
+   then replug the USB. Rerun the paused-send timing test (no motion). If there are no stalls and no
+   error 2, the services were the cause; set them to Manual startup on this PC.
+2. Then the 75% run: `uv run hexapod-expt-run --hexapod --protocol experiments/demo_fast.json`
+   (area clear, E-stop in hand; lift starts at once, the surge on Start).
+3. If error 2 persists with the services stopped: USB directly into the PC, USB selective suspend
+   off; ask Motion Systems what `GetRecentErrorCode` 2 means (DLL 2.177); try Ethernet.
+4. Force calibration: full scale at ±5 V is [500 500 1000 N, 150 100 75 N·m] per plate, so
+   `C = diag([100 100 200 30 20 15])` per volt. Check the Fz sign with a press first (a negative Fz
+   would read as empty plates and trigger the override). Rebuild with the plates empty (re-tare).
+5. Verify the rest of the channel order (Fz, moments) by pressing on each plate; set
+   `P.noise_floor_N` from the empty-plate Fz noise once `C` is real.
+
 ## 2026-10-08: transient tilt during fast moves, and what the force plates can tell us
 
 - **The 0.5° tilt guard** (`TILT_LIMIT_DEG` in `level_move.py`, used by `hexapod-park-test`)

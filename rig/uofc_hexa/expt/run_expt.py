@@ -17,8 +17,7 @@ setpoint at 100 Hz during the run, and lowers and parks after it. Without it, th
 is not touched.
 
 Run: uv run hexapod-expt-run --protocol experiments/demo_surge.json
-     uv run hexapod-expt-run --hexapod --run-byte 0                  (M10 imitator over USB)
-     uv run hexapod-expt-run --hexapod --run-byte 0 --ip 10.1.1.75   (the platform, on Ethernet)
+     uv run hexapod-expt-run --hexapod --protocol experiments/demo_fast.json   (the platform, USB)
      uv run hexapod-expt-emulator & uv run hexapod-expt-run --target 127.0.0.1 --auto-start   (no Speedgoat)
 """
 from __future__ import annotations
@@ -187,15 +186,24 @@ def main():
     hexa.add_argument("--library", default=vendor.default_library(),
                       help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
     transport = hexa.add_mutually_exclusive_group()
-    transport.add_argument("--serial", default=lm.M10_SERIAL,
-                           help="USB controller S/N; 'any' = first attached (default: the M10 imitator)")
+    transport.add_argument("--serial", default="any",
+                           help="USB controller S/N (default: any attached; the lab PC has the PS-6TL-350)")
     transport.add_argument("--ip", help="controller IP address, for a controller on Ethernet")
-    hexa.add_argument("--run-byte", type=int, choices=[0, 1], help="required with --hexapod")
-    hexa.add_argument("--max-speed", type=int, default=2000, help="FSDI maxSpeed, logical units; NOT mm/s")
+    hexa.add_argument("--run-byte", type=int, choices=[0, 1], default=0,
+                      help="pause-field value meaning RUN (0: verified on the PS-6TL-350, 2026-10-20)")
+    hexa.add_argument("--max-speed", type=int, default=65535,
+                      help="FSDI maxSpeed, logical units, NOT mm/s (default: no controller cap; the "
+                           "setpoint is already speed-limited by the protocol and the relay)")
+    hexa.add_argument("--tilt-limit", type=float, default=1.0,
+                      help="pause if reported roll/pitch/yaw exceeds this during the run, deg (fast moves "
+                           "show transient tilt: up to 0.46 deg on the M10)")
     hexa.add_argument("--lift-rate", type=float, default=10.0, help="lift/lower setpoint rate, mm/s")
     args = parser.parse_args()
-    if args.hexapod and (args.run_byte is None or not args.library):
-        parser.error(f"--hexapod needs --run-byte and --library (or ${vendor.LIBRARY_ENV})")
+    if args.hexapod and not args.library:
+        parser.error(f"--hexapod needs --library (or ${vendor.LIBRARY_ENV})")
+    if args.hexapod:
+        import sys
+        sys.setswitchinterval(0.001)  # the plot and receiver share the GIL with the 100 Hz relay loop
 
     name, trials = protocol.load(args.protocol)
     print(f"{name}: {len(trials)} trials -> Speedgoat {args.target}:{args.cmd_port}, "
@@ -217,7 +225,7 @@ def main():
             time.sleep(0.1)
         device = lm.Device(args.library, args.ip, args.serial, args.run_byte, args.max_speed, 0, tfp.LIFT_BOUND_MM)
         try:
-            hexapod = relay.Relay(device, rx, trials, lift_rate=args.lift_rate)
+            hexapod = relay.Relay(device, rx, trials, lift_rate=args.lift_rate, tilt_limit_deg=args.tilt_limit)
             hexapod.prepare()
         except BaseException:
             device.close()
@@ -246,7 +254,7 @@ def main():
             while not session.finished and time.perf_counter() - t0 < args.timeout:
                 tick()
                 time.sleep(0.05)
-            update(rx, fig, ax, lines, circles, title, args.window, status=session.status)
+            update(rx, fig, ax, lines, circles, title, args.window, status=session.status, pose=hexapod)
             fig.savefig(args.headless, dpi=90)
             print(f"Saved {args.headless}")
         else:
@@ -259,7 +267,7 @@ def main():
 
             def frame(_):
                 tick()
-                update(rx, fig, ax, lines, circles, title, args.window, status=session.status)
+                update(rx, fig, ax, lines, circles, title, args.window, status=session.status, pose=hexapod)
                 if session.finished:
                     plt.close(fig)
 

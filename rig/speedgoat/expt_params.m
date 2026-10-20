@@ -26,20 +26,20 @@ P.tare_s = 2;                    % load cells zeroed over the first tare_s after
 P.cop_center_auto = true;        % true: centre = running mean CoP at the moment Start goes high
 P.cop_center_mm = [0 0];         % used when cop_center_auto is false (plate frame, mm)
 
-% Analog inputs on the IO324-200k (module 1). simulink/ReadForcePlates.slx enables only
-% AI 3; the plate wiring order is still unknown. P.plate(k).channels index into THIS list
+% Analog inputs on the IO324-200k (module 1). ReadForcePlates (Aug 31 autosave) reads AI 1-12 as two
+% groups of 6; order within a group assumed Bertec Fx Fy Fz Mx My Mz. P.plate(k).channels index into THIS list
 % (position in the block's output vector), not the module's channel numbers.
 P.ai_channels = 1:12;            % IO324 channels to read, at most 12 are sent to the host
 
 % Force plates: PLACEHOLDERS until the lab's plates and channel order are known.
 % Each plate: 6 calibrated channels [Fx Fy Fz Mx My Mz] (N, N*m) = C * volts.
-P.plate(1).C = eye(6);           % left plate: volts -> [Fx Fy Fz Mx My Mz]
+P.plate(1).C = eye(6);           % RIGHT plate (AI 1-6; Fy confirmed by a push, 2026-10-20): volts -> [Fx Fy Fz Mx My Mz]
 P.plate(1).channels = 1:6;       % positions in the analog input vector, in that order
-P.plate(1).origin_mm = [-250 0]; % plate centre in the shared frame (x = sway/right, y = surge/front)
+P.plate(1).origin_mm = [250 0];  % plate centre in the shared frame (x = sway/right, y = surge/front)
 P.plate(1).dz_mm = 0;            % depth of the plate's measurement origin below its surface
-P.plate(2).C = eye(6);           % right plate
+P.plate(2).C = eye(6);           % LEFT plate (AI 7-12)
 P.plate(2).channels = 7:12;
-P.plate(2).origin_mm = [250 0];
+P.plate(2).origin_mm = [-250 0];
 P.plate(2).dz_mm = 0;
 
 % Packets (rig/uofc_hexa/expt/packet.py and command.py)

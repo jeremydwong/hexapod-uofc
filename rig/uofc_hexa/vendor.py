@@ -42,5 +42,9 @@ def structs():
 
 
 def default_library():
-    """The native library path from $FORCESEATDI_LIBRARY, or None if it is unset."""
-    return os.environ.get(LIBRARY_ENV) or None
+    """$FORCESEATDI_LIBRARY, else the newest ~/Documents/MotionSystems/ForceSeatDI_*/ForceSeatDI64.dll
+    (where the lab PC has it), else None."""
+    if os.environ.get(LIBRARY_ENV):
+        return os.environ[LIBRARY_ENV]
+    found = sorted((Path.home() / "Documents" / "MotionSystems").glob("ForceSeatDI_*/ForceSeatDI64.dll"))
+    return str(found[-1]) if found else None
