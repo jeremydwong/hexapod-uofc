@@ -52,7 +52,7 @@ add_block('simulink/Sources/Digital Clock', [mdl '/Clock'], 'SampleTime', num2st
 rx = [mdl '/UDP Rx'];
 add_block(udp_block('UDP Receive'), rx, 'Position', [40 230 200 300]);
 checks{end + 1} = set_any(rx, {'localPort', 'ipPort', 'port'}, num2str(net.cmd_port));
-checks{end + 1} = set_any(rx, {'receiveWidth', 'width', 'dataWidth', 'outputWidth', 'maxLength', 'msgLength'}, '112');
+checks{end + 1} = set_any(rx, {'rcvWidth', 'receiveWidth', 'width', 'dataWidth', 'outputWidth', 'maxLength', 'msgLength'}, '112');
 checks{end + 1} = set_any(rx, {'sampleTime', 'ts'}, num2str(P.dt));
 
 % --- MATLAB Function blocks (bodies pasted from the .m files) ---
@@ -104,7 +104,10 @@ checks{end + 1} = set_any(tx, {'sampleTime', 'ts'}, num2str(P.dt));
 add_line(mdl, 'pack_state/1', 'UDP Tx/1', 'autorouting', 'on');
 ph = get_param(tx, 'PortHandles');
 if numel(ph.Inport) > 1
-    checks{end + 1} = sprintf('UDP Tx has %d inputs: wire any length/enable input (312 bytes, always 1)', numel(ph.Inport));
+    % R2025b UDP Send: input 2 is Length (bytes to send, double).
+    add_block('simulink/Sources/Constant', [mdl '/TxLen'], 'Value', '312', 'SampleTime', num2str(P.dt), ...
+        'Position', [1160 400 1200 420]);
+    add_line(mdl, 'TxLen/1', 'UDP Tx/2', 'autorouting', 'on');
 end
 
 % --- File log: the authoritative record on the target ---
@@ -141,7 +144,7 @@ end
 
 function lib_blk = udp_block(name)
 % The Simulink Real-Time UDP blocks (R2020b+). Library names have moved between releases.
-for lib = {'slrealtimeudp', 'slrealtimelib'}
+for lib = {'slrealtimeiplib', 'slrealtimeudp', 'slrealtimelib'}   % slrealtimeiplib: R2025b
     try
         load_system(lib{1});
         hit = find_system(lib{1}, 'LookUnderMasks', 'all', 'FollowLinks', 'on', 'Name', name);
