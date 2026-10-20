@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--sway-sd", type=float, default=2.0, help="quiet-stance CoP SD per axis (mm)")
     parser.add_argument("--gain", type=float, default=0.3, help="CoP shift per mm of platform displacement")
     parser.add_argument("--recover-s", type=float, default=1.5, help="CoP recovery time constant (s)")
+    parser.add_argument("--fz", type=float, default=700.0, help="total vertical force (N); 0 = empty plates (CoP gates overridden)")
     parser.add_argument("--start-after", type=float, default=2.0, help="standalone: seconds before Start")
     parser.add_argument("--speed", type=float, default=1.0, help="time multiplier (2 = twice real time)")
     parser.add_argument("--seed", type=int, default=0)
@@ -81,7 +82,7 @@ def main():
                 platform = fsm.sp_last[:2]  # [sway, surge]
                 settled += (platform - settled) * DT / args.recover_s
                 cop = stance + sway - args.gain * (platform - settled)
-                out = fsm.step(t, start=h["start"], host_ok=h["host_ok"], cop_xy=cop, fz_total=700.0,
+                out = fsm.step(t, start=h["start"], host_ok=h["host_ok"], cop_xy=cop, fz_total=args.fz,
                                trials=None if standalone or h["start"] else h["trials"])
                 out.update({k: h[k] for k in ("n_trials", "n_loaded", "table_sum", "cmd_seq", "n_rejected")},
                            host_ok=float(h["host_ok"]), magic=packet.MAGIC, version=packet.VERSION, seq=seq)

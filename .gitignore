@@ -16,4 +16,5 @@ fsdi_simulink_log.txt
 .venv/
 rig/speedgoat/expt_rt.slx
 *.mldatx
+*_sg_rtw/
 *_slrealtime_rtw/

@@ -11,9 +11,14 @@ Sequence:
   5. At DONE, or on Stop, Start goes to 0. On exit the heartbeat keeps going until the
      Speedgoat is idle, so it does not fault mid-move; then the stream is saved to --out.
 
-The setpoint is NOT sent to the hexapod yet: this only drives and watches the Speedgoat.
+With --hexapod the host also relays the setpoint to the platform (relay.py): it checks every
+protocol target (paused) and lifts to home before Start is allowed, streams the Speedgoat's
+setpoint at 100 Hz during the run, and lowers and parks after it. Without it, the platform
+is not touched.
 
 Run: uv run hexapod-expt-run --protocol experiments/demo_surge.json
+     uv run hexapod-expt-run --hexapod --run-byte 0                  (M10 imitator over USB)
+     uv run hexapod-expt-run --hexapod --run-byte 0 --ip 10.1.1.75   (the platform, on Ethernet)
      uv run hexapod-expt-emulator & uv run hexapod-expt-run --target 127.0.0.1 --auto-start   (no Speedgoat)
 """
 from __future__ import annotations
@@ -28,7 +33,10 @@ import time
 
 import numpy as np
 
-from uofc_hexa.expt import command, packet, protocol
+from uofc_hexa import vendor
+from uofc_hexa.expt import command, packet, protocol, relay
+from uofc_hexa.hexapod import level_move as lm
+from uofc_hexa.hexapod import test_from_park as tfp
 from uofc_hexa.expt.fsm import S_DONE, S_FAULT, S_IDLE
 from uofc_hexa.expt.live_view import Receiver, build_figure, update
 
@@ -67,8 +75,8 @@ class Commander(threading.Thread):
 class Session:
     """Host-side steps, polled from the plot timer (or the headless loop)."""
 
-    def __init__(self, rx, cmd, trials, auto_start, exit_when_done):
-        self.rx, self.cmd, self.trials = rx, cmd, trials
+    def __init__(self, rx, cmd, trials, auto_start, exit_when_done, relay=None):
+        self.rx, self.cmd, self.trials, self.relay = rx, cmd, trials, relay
         self.expected = command.table_sum(trials)
         self.auto_start, self.exit_when_done = auto_start, exit_when_done
         self.started = self.finished = False
@@ -81,7 +89,8 @@ class Session:
 
     def start(self):
         s = self.rx.last
-        if s is not None and self.loaded(s) and int(s.state) in (S_IDLE, S_DONE):
+        relay_ok = self.relay is None or (self.relay.ready and not self.relay.fault)
+        if s is not None and self.loaded(s) and int(s.state) in (S_IDLE, S_DONE) and relay_ok:
             self.cmd.start_flag, self.started, self.done_at = True, True, None
             print("Start sent")
 
@@ -97,7 +106,10 @@ class Session:
                            + (f" ({self.rx.bad} bad: old model version?)" if self.rx.bad else ""))
             return
         st = int(s.state)
-        if int(s.n_rejected):
+        if self.relay is not None and self.relay.fault:
+            self.cmd.start_flag = False
+            self.status = f"HEXAPOD RELAY FAULT, platform paused: {self.relay.fault}"
+        elif int(s.n_rejected):
             self.status = f"Speedgoat REJECTED {int(s.n_rejected)} rows (limits): fix the protocol"
         elif not self.loaded(s):
             self.status = f"loading table {int(s.n_loaded)}/{len(self.trials)}"
@@ -141,13 +153,18 @@ def shutdown(rx, cmd, timeout_s=20.0):
     cmd.running = False
 
 
-def save(rx, out_dir, name):
+def save(rx, out_dir, name, relay_obj=None):
     with rx.lock:
         data = np.array(rx.record) if rx.record else np.zeros((0, len(packet.FIELDS)))
     out = Path(out_dir) / f"{name}_{datetime.now():%Y%m%d_%H%M%S}.npz"
     out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out, data=data, fields=np.array(packet.FIELDS))
-    print(f"Saved {len(data)} packets to {out} ({rx.lost} lost, {rx.bad} bad)")
+    extra = {}
+    if relay_obj is not None:  # what was sent to the hexapod and what the SDK reported, at 100 Hz
+        rows = np.array(relay_obj.rows, dtype=float) if relay_obj.rows else np.zeros((0, len(relay.FIELDS)))
+        extra = {"relay": rows, "relay_fields": np.array(relay.FIELDS)}
+    np.savez_compressed(out, data=data, fields=np.array(packet.FIELDS), **extra)
+    print(f"Saved {len(data)} packets to {out} ({rx.lost} lost, {rx.bad} bad)"
+          + (f", {len(extra['relay'])} relay rows" if extra else ""))
 
 
 def main():
@@ -165,7 +182,20 @@ def main():
     parser.add_argument("--headless", metavar="PNG", help="no window: run, then save the last frame here")
     parser.add_argument("--timeout", type=float, default=600.0, help="headless: give up after this many s")
     parser.add_argument("--out", default="output/expt", help="where the recorded stream is saved")
+    hexa = parser.add_argument_group("hexapod relay (off unless --hexapod)")
+    hexa.add_argument("--hexapod", action="store_true", help="lift, relay the setpoint to the platform, park")
+    hexa.add_argument("--library", default=vendor.default_library(),
+                      help=f"ForceSeatDI native library (default: ${vendor.LIBRARY_ENV})")
+    transport = hexa.add_mutually_exclusive_group()
+    transport.add_argument("--serial", default=lm.M10_SERIAL,
+                           help="USB controller S/N; 'any' = first attached (default: the M10 imitator)")
+    transport.add_argument("--ip", help="controller IP address, for a controller on Ethernet")
+    hexa.add_argument("--run-byte", type=int, choices=[0, 1], help="required with --hexapod")
+    hexa.add_argument("--max-speed", type=int, default=2000, help="FSDI maxSpeed, logical units; NOT mm/s")
+    hexa.add_argument("--lift-rate", type=float, default=10.0, help="lift/lower setpoint rate, mm/s")
     args = parser.parse_args()
+    if args.hexapod and (args.run_byte is None or not args.library):
+        parser.error(f"--hexapod needs --run-byte and --library (or ${vendor.LIBRARY_ENV})")
 
     name, trials = protocol.load(args.protocol)
     print(f"{name}: {len(trials)} trials -> Speedgoat {args.target}:{args.cmd_port}, "
@@ -177,8 +207,25 @@ def main():
     rx.start()
     cmd = Commander(args.target, args.cmd_port, trials, args.rate)
     cmd.start()
+    device = hexapod = None
+    if args.hexapod:
+        t0 = time.perf_counter()
+        while rx.last is None:  # the relay follows the stream, so it must be up before the lift
+            if time.perf_counter() - t0 > 30:
+                cmd.running = rx.stop = True
+                raise SystemExit(f"No state packets on UDP {args.port} after 30 s; hexapod not touched")
+            time.sleep(0.1)
+        device = lm.Device(args.library, args.ip, args.serial, args.run_byte, args.max_speed, 0, tfp.LIFT_BOUND_MM)
+        try:
+            hexapod = relay.Relay(device, rx, trials, lift_rate=args.lift_rate)
+            hexapod.prepare()
+        except BaseException:
+            device.close()
+            cmd.running = rx.stop = True
+            raise
+        hexapod.start()
     session = Session(rx, cmd, trials, args.auto_start or bool(args.headless),
-                      args.exit_when_done or bool(args.headless))
+                      args.exit_when_done or bool(args.headless), relay=hexapod)
     last_status = None
 
     def tick():
@@ -224,8 +271,14 @@ def main():
     finally:
         print("Shutting down: Start = 0, waiting for the Speedgoat to idle")
         shutdown(rx, cmd)
+        if hexapod is not None:
+            try:
+                print("Lowering and parking the hexapod")
+                hexapod.finish()
+            finally:
+                device.close()
         rx.stop = True
-        save(rx, args.out, name)
+        save(rx, args.out, name, hexapod)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ function build_expt_rt()
 %     UDP Receive (port net.cmd_port) --data,len--> host_rx --start, host_ok, TT, n...--> fsm_expt
 %     IO324 Analog input (P.ai_channels) --volts--> cop_from_plates --cop_xy, fz--> fsm_expt
 %     Digital Clock --t--> host_rx, fsm_expt, pack_state
-%     fsm_expt + host_rx echo + volts --> pack_state --312 bytes--> UDP Send (net.host_ip:net.state_port)
-%   Logged to the target's file log: volts, CoP, Fz, setpoint, state, trial, events, start, host_ok.
+%     fsm_expt + host_rx echo + zeroed volts --> pack_state --312 bytes--> UDP Send (net.host_ip:net.state_port)
+%   Logged to the target's file log: raw and zeroed volts, CoP, Fz, setpoint, state, trial, events, start, host_ok.
 
 here = fileparts(mfilename('fullpath'));
 addpath(here);
@@ -51,6 +51,7 @@ add_block('simulink/Sources/Digital Clock', [mdl '/Clock'], 'SampleTime', num2st
 % --- Host -> Speedgoat: UDP Receive ---
 rx = [mdl '/UDP Rx'];
 add_block(udp_block('UDP Receive'), rx, 'Position', [40 230 200 300]);
+set_param(rx, 'useHostTargetConn', 'on');   % bind to the host-target link, not the block's 10.10.10.x default
 checks{end + 1} = set_any(rx, {'localPort', 'ipPort', 'port'}, num2str(net.cmd_port));
 checks{end + 1} = set_any(rx, {'rcvWidth', 'receiveWidth', 'width', 'dataWidth', 'outputWidth', 'maxLength', 'msgLength'}, '112');
 checks{end + 1} = set_any(rx, {'sampleTime', 'ts'}, num2str(P.dt));
@@ -73,7 +74,15 @@ else
     add_line(mdl, 'RxLen/1', 'host_rx/3', 'autorouting', 'on');
     checks{end + 1} = 'UDP Rx has no length output: using a constant 112 (OK, see host_rx.m)';
 end
-add_line(mdl, 'AnalogIn/1', 'cop_from_plates/1', 'autorouting', 'on');
+% The IO324 block has one output port per channel: mux them into the volts vector.
+ph = get_param([mdl '/AnalogIn'], 'PortHandles');
+n_ai = numel(ph.Outport);
+add_block('simulink/Signal Routing/Mux', [mdl '/AiMux'], 'Inputs', num2str(n_ai), ...
+    'Position', [230 380 235 520]);
+for k = 1:n_ai
+    add_line(mdl, sprintf('AnalogIn/%d', k), sprintf('AiMux/%d', k), 'autorouting', 'on');
+end
+add_line(mdl, 'AiMux/1', 'cop_from_plates/1', 'autorouting', 'on');
 
 % fsm_expt(t, start, host_ok, cop_xy, fz_total, TT, n_trials, P)
 add_line(mdl, 'Clock/1', 'fsm_expt/1', 'autorouting', 'on');
@@ -90,7 +99,7 @@ add_line(mdl, 'host_rx/4', 'fsm_expt/7', 'autorouting', 'on');
 src = {'Clock/1', 'fsm_expt/2', 'fsm_expt/3', 'fsm_expt/1', 'cop_from_plates/1', 'fsm_expt/6', ...
        'fsm_expt/5', 'cop_from_plates/2', 'fsm_expt/8', 'fsm_expt/4', 'fsm_expt/7', 'fsm_expt/9', ...
        'fsm_expt/10', 'fsm_expt/11', 'host_rx/4', 'host_rx/5', 'host_rx/6', 'host_rx/2', 'host_rx/7', ...
-       'host_rx/8', 'AnalogIn/1'};
+       'host_rx/8', 'cop_from_plates/3'};
 for k = 1:numel(src)
     add_line(mdl, src{k}, sprintf('pack_state/%d', k), 'autorouting', 'on');
 end
@@ -98,6 +107,7 @@ end
 % --- Speedgoat -> host: UDP Send ---
 tx = [mdl '/UDP Tx'];
 add_block(udp_block('UDP Send'), tx, 'Position', [1250 330 1410 390]);
+set_param(tx, 'useHostTargetConn', 'on');
 checks{end + 1} = set_any(tx, {'toAddress', 'remoteAddress', 'remoteIpAddress', 'ipAddress'}, ['''' net.host_ip '''']);
 checks{end + 1} = set_any(tx, {'toPort', 'remotePort', 'ipPort'}, num2str(net.state_port));
 checks{end + 1} = set_any(tx, {'sampleTime', 'ts'}, num2str(P.dt));
@@ -111,9 +121,10 @@ if numel(ph.Inport) > 1
 end
 
 % --- File log: the authoritative record on the target ---
-log_port('AnalogIn', 1, 'volts');
+log_port('AiMux', 1, 'volts');
 log_port('cop_from_plates', 1, 'cop_xy');
 log_port('cop_from_plates', 2, 'fz_total');
+log_port('cop_from_plates', 3, 'volts_zeroed');
 names = {'sp', 'state', 'trial', 't_state', 'stable_s', 'cop_sd', 'center', 'events'};
 for k = 1:numel(names)
     log_port('fsm_expt', k, names{k});

@@ -1,8 +1,13 @@
-function [cop_xy, fz_total] = cop_from_plates(volts, P)
+function [cop_xy, fz_total, volts_zeroed] = cop_from_plates(volts, P)
 %COP_FROM_PLATES Combined centre of pressure of two force plates (MATLAB Function block).
 %   volts: 12 analog inputs. P: expt_params struct (block Parameter).
 %   cop_xy: [x y] mm in the shared plate frame (x = sway/right, y = surge/front).
 %   fz_total: total vertical force (N); CoP is NaN-free but meaningless when it is small.
+%   volts_zeroed: the inputs minus their tare offsets (what the host plots).
+%
+%   Tare: for the first P.tare_s after the app starts, each channel's mean is accumulated
+%   and the outputs are zero; from then on that mean is subtracted. The plates must be
+%   empty at app start. To re-zero, restart the app (start_expt_rt).
 %
 %   Per plate, AMTI-style: [Fx Fy Fz Mx My Mz] = C * volts, then
 %     x = (-My - Fx*dz) / Fz,   y = (Mx - Fy*dz) / Fz   (local, m -> mm),
@@ -10,11 +15,27 @@ function [cop_xy, fz_total] = cop_from_plates(volts, P)
 %   Sign conventions and axis directions depend on the plates and how they are
 %   mounted: check against a known load (stand on a corner) before trusting it.
 
+persistent offset n_tare
+if isempty(offset)
+    offset = zeros(size(volts(:)));
+    n_tare = 0;
+end
+n_need = max(round(P.tare_s / P.dt), 1);
+if n_tare < n_need
+    n_tare = n_tare + 1;
+    offset = offset + (volts(:) - offset) / n_tare;   % running mean
+    volts_zeroed = zeros(size(volts(:)));
+    cop_xy = [0 0];
+    fz_total = 0;
+    return;
+end
+volts_zeroed = volts(:) - offset;
+
 fz_total = 0;
 moment = [0 0];
 for k = 1:2
     plate = P.plate(k);
-    f = plate.C * volts(plate.channels(:));          % [Fx Fy Fz Mx My Mz]
+    f = plate.C * volts_zeroed(plate.channels(:));   % [Fx Fy Fz Mx My Mz]
     fz = f(3);
     dz = plate.dz_mm / 1000;
     if abs(fz) > 1                                    % ignore an unloaded plate

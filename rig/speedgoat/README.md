@@ -18,9 +18,9 @@ hexapod-expt-run --- UDP 25001, 100 Hz ---------->  host_rx: heartbeat, Start, t
 
 **Status:** block functions tested in plain MATLAB (`test_host_rx.m`, `test_fsm_expt.m`),
 byte layouts cross-checked against the Python side, host program tested end to end against
-the emulator. `build_expt_rt.m` has **not** been run yet (needs Simulink Real-Time + the
-Speedgoat libraries; it reports any UDP block parameter it could not set). The setpoint is
-not yet relayed to the hexapod.
+the emulator. `build_expt_rt.m` runs on R2025b and the model compiles (Update Diagram); not
+yet built and run on the Speedgoat itself. The host relay to the hexapod (`--hexapod`) is
+written but not yet run against a controller.
 
 ## Running the demo
 
@@ -43,8 +43,21 @@ same checksum, then enables **Start**. `--auto-start` skips the button; `--start
 `start_expt_rt` through `matlab -batch` first. Closing the window sets Start = 0, keeps the
 heartbeat until the Speedgoat is idle, and saves the stream to `output/expt/<name>_<time>.npz`.
 
-Without a Speedgoat: `uv run hexapod-expt-emulator` in one terminal, then
-`uv run hexapod-expt-run --target 127.0.0.1`.
+**Plates empty when the app starts:** `cop_from_plates` zeroes the load cells over the first
+`P.tare_s` (2 s) and the FSM ignores Start until then. The host plots the zeroed volts. To
+re-zero, restart the app.
+
+With `--hexapod --run-byte 0` (plus `--ip 10.1.1.75` for the platform on Ethernet; default is
+the M10 imitator on USB) the host also drives the platform (`rig/uofc_hexa/expt/relay.py`):
+before Start it checks every protocol target paused (FullMatch; nothing moves on a rejection)
+and lifts from park to home; during the run it sends the Speedgoat's setpoint every 10 ms,
+slew-limited, and pauses the platform on a stale stream (> 0.5 s), a Speedgoat FAULT, a pose
+outside the bound or tilt limit, or any SDK error; after the run it lowers and parks. What it
+sent and what the SDK reported are saved in the same `.npz` (`relay`, `relay_fields`).
+The E-stop remains the real stop.
+
+Without a Speedgoat: `uv run hexapod-expt-emulator` in one terminal (`--fz 0` for empty
+plates), then `uv run hexapod-expt-run --target 127.0.0.1`.
 
 ## Protocols (why no file on the target)
 
@@ -71,7 +84,7 @@ which means a rebuild (minutes) for every protocol change.
 | `start_expt_rt.m` | Build if stale, load and start on the target |
 | `host_rx.m` | MATLAB Function block: command packet → Start, host_ok, trial table, echo |
 | `fsm_expt.m` | MATLAB Function block: the trial state machine and open-loop setpoints |
-| `cop_from_plates.m` | MATLAB Function block: analog inputs → combined CoP and total Fz |
+| `cop_from_plates.m` | MATLAB Function block: tare, then analog inputs → combined CoP and total Fz |
 | `pack_state.m` | MATLAB Function block: the 39-double state packet, as bytes |
 | `expt_params.m` | Parameters `P` (limits, CoP filter, AI channels, plate calibration) and `net` |
 | `load_trials.m` | Trial CSV → table matrix, for the desktop tests |
@@ -79,13 +92,13 @@ which means a rebuild (minutes) for every protocol change.
 
 Python side (`rig/uofc_hexa/expt/`): `command.py` (command packet, `host_rx` mirror),
 `packet.py` (state packet), `fsm.py` (FSM mirror), `protocol.py`, `run_expt.py`
-(`hexapod-expt-run`), `live_view.py` (`hexapod-live`), `emulator.py`. Keep each mirror in step
+(`hexapod-expt-run`), `relay.py` (setpoint → hexapod), `live_view.py` (`hexapod-live`), `emulator.py`. Keep each mirror in step
 with its MATLAB block.
 
 ## States
 
 ```
-IDLE --Start--> HOMED --random_s elapsed--> MOVETGT --arrived--> WAIT_COP
+IDLE --Start--> HOMED --random_s elapsed AND CoP centred--> MOVETGT --arrived--> WAIT_COP
   ^               ^                                               | CoP within cop_radius_mm of centre,
   |               '------------- next trial <---- RETURN <--------'  SD < cop_sd_mm, for thresh_seconds_cop_stable
   '-- Start = 0 (after returning home)            '-- last trial --> DONE      (or max_wait_s, if > 0)
@@ -93,8 +106,11 @@ host_ok = 0 in HOMED/MOVETGT/WAIT_COP/RETURN --> FAULT (setpoint frozen; restart
 ```
 
 Moves are open-loop smoothsteps: duration = 1.875 × distance / peak speed (minimum 0.2 s).
-Heave stays 0. `max_wait_s` lets a trial return even if the CoP never settles: the demo uses it
-because uncalibrated plates (or nobody standing) never pass the `P.min_fz_N` check.
+Heave stays 0. "CoP centred" (both gates) = total Fz at least `P.min_fz_N`, CoP within
+`cop_radius_mm` of the centre, running SD below `cop_sd_mm`. **Empty-plate override:** with total
+Fz below `P.noise_floor_N` both gates pass, so the protocol runs on an empty platform; loads
+between the noise floor and `P.min_fz_N` (someone stepping on or off) wait. `max_wait_s` still
+lets a loaded trial return if the CoP never settles.
 
 ## Before a real run
 
@@ -105,6 +121,8 @@ because uncalibrated plates (or nobody standing) never pass the `P.min_fz_N` che
 2. **UDP blocks.** Check the dialog values `build_expt_rt` lists (ports 25001 in, 25000 out to
    192.168.7.2). Speedgoat recommends a dedicated real-time Ethernet port for UDP if the target
    has one; the host-target link works for a demo. Avoid ports 1–1023 and 5500–5560.
-3. **Setpoint relay.** Next piece: the host forwards `sp_sway`/`sp_surge` to the hexapod
-   (ForceSeatDI) and returns the reported pose. The vendor FSDI Simulink blocks call a Windows
-   DLL, so they cannot run in this QNX model; the relay belongs on the host.
+3. **Noise floor.** `P.noise_floor_N` (50 N) is a placeholder: set it from the zeroed, empty
+   plates' Fz noise once `C` is real.
+4. **Relay on hardware.** First on the M10 imitator, then the platform at a short protocol with
+   the area clear and E-stop in hand. The relay runs on the host because the controller is only
+   reachable through ForceSeatDI, a Windows DLL; the Speedgoat (QNX) cannot call it.

@@ -26,11 +26,16 @@ function [sp, state, trial, t_state, stable_s, cop_sd, center, events, radius, s
 %             8 trial done, 16 fault
 %   radius, sd_thr, stable_need   this trial's thresholds (for the host display)
 %
-% Sequence per trial: HOMED (wait random_s) -> MOVETGT (open-loop smoothstep to
+% Sequence per trial: HOMED (wait random_s, then until the CoP is centred: within
+% cop_radius_mm of the centre with running SD below cop_sd_mm) -> MOVETGT (open-loop smoothstep to
 % distance_mm along the trial's axis at peak_speed_mm_s) -> WAIT_COP (until the CoP
 % has stayed within cop_radius_mm of the centre with running SD below cop_sd_mm for
 % thresh_seconds_cop_stable, or for max_wait_s if that is > 0) -> RETURN (smoothstep home at P.return_speed_mm_s) ->
 % next trial, or DONE.
+% Unloaded override: with fz_total below P.noise_floor_N (nobody on the plates) both CoP
+% gates pass, so the protocol runs on an empty platform (start gate at once; return after
+% thresh_seconds_cop_stable). Loads between the noise floor and P.min_fz_N wait.
+% Start is ignored until t >= P.tare_s, while cop_from_plates zeroes the load cells.
 % Stopping: start = 0 ends WAIT_COP early (returns home) and stops after the current
 % trial; host_ok = 0 freezes the setpoint (FAULT) until the model is restarted.
 % Heave is always 0: the host lifts the platform to home before Start and parks after.
@@ -58,9 +63,12 @@ if valid
     v = (1 - a) * (v + a * d .^ 2);
 end
 cop_sd = sqrt(v(1) + v(2));
+unloaded = fz_total < P.noise_floor_N;
 
 n = max(n_trials, 1);
 k = min(max(tr, 1), n);       % row of the current trial
+% CoP "in the middle" for this trial, or nobody on the plates.
+centred = unloaded || (valid && sqrt(sum((cop_xy - ctr) .^ 2)) < TT(k, 6) && cop_sd < TT(k, 7));
 sp = sp_last;
 
 % Host lost while the experiment is running: freeze where we are.
@@ -71,7 +79,7 @@ end
 switch st
     case S_IDLE
         sp = zeros(1, 3);
-        if start && host_ok
+        if start && host_ok && t >= P.tare_s
             if P.cop_center_auto
                 ctr = m;
             else
@@ -85,7 +93,7 @@ switch st
         sp = zeros(1, 3);
         if ~start
             st = S_IDLE; t_enter = t;
-        elseif t - t_enter >= TT(k, 1)
+        elseif t - t_enter >= TT(k, 1) && centred
             p0 = zeros(1, 3);
             p1 = zeros(1, 3);
             p1(axis_index(TT(k, 2))) = TT(k, 3);
@@ -104,8 +112,7 @@ switch st
 
     case S_WAIT_COP
         sp = p1;
-        near = sqrt(sum((cop_xy - ctr) .^ 2)) < TT(k, 6);
-        if valid && near && cop_sd < TT(k, 7)
+        if centred
             stable = stable + dt;
         else
             stable = 0;

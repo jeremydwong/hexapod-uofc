@@ -20,7 +20,9 @@ P.host_timeout_s = 0.5;          % host_ok drops if the host heartbeat stalls th
 
 % CoP processing
 P.cop_tau_s = 0.5;               % time constant of the running mean / SD (s)
-P.min_fz_N = 200;                % below this total vertical force: nobody on the plates
+P.min_fz_N = 200;                % CoP gates need at least this total vertical force (someone standing)
+P.noise_floor_N = 50;            % below this: plates empty, CoP gates are overridden (PLACEHOLDER until calibrated)
+P.tare_s = 2;                    % load cells zeroed over the first tare_s after app start (plates empty!)
 P.cop_center_auto = true;        % true: centre = running mean CoP at the moment Start goes high
 P.cop_center_mm = [0 0];         % used when cop_center_auto is false (plate frame, mm)
 

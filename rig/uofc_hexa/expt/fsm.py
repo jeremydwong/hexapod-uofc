@@ -38,9 +38,11 @@ def smoothstep(u):
 
 class FsmExpt:
     def __init__(self, trials, return_speed_mm_s=100.0, min_move_s=0.2, cop_tau_s=0.5, min_fz_n=200.0,
+                 noise_floor_n=50.0, tare_s=2.0,
                  cop_center_auto=True, cop_center_mm=(0.0, 0.0)):
         self.trials, self.return_speed, self.min_move = trials, return_speed_mm_s, min_move_s
         self.tau, self.min_fz, self.auto, self.center0 = cop_tau_s, min_fz_n, cop_center_auto, np.array(cop_center_mm)
+        self.noise_floor, self.tare_s = noise_floor_n, tare_s
         self.st, self.tr, self.t_enter, self.last_t = S_IDLE, 1, None, None
         self.p0 = self.p1 = self.sp_last = np.zeros(3)
         self.move_T, self.stable = 1.0, 0.0
@@ -63,11 +65,14 @@ class FsmExpt:
             self.m = self.m + a * d
             self.v = (1 - a) * (self.v + a * d ** 2)
         cop_sd = math.sqrt(self.v.sum())
+        unloaded = fz_total < self.noise_floor
         n_trials = len(self.trials)
         n = max(n_trials, 1)
         table = self.trials or [ZERO_ROW]  # nothing loaded yet: zeros, like the padded table on the target
         k = min(max(self.tr, 1), n) - 1
         T = table[k]
+        centred = unloaded or (valid and math.hypot(*(cop_xy - self.ctr)) < T["cop_radius_mm"]
+                               and cop_sd < T["cop_sd_mm"])
         sp = self.sp_last.copy()
 
         if not host_ok and self.st in (S_HOMED, S_MOVETGT, S_WAIT_COP, S_RETURN):
@@ -76,7 +81,7 @@ class FsmExpt:
 
         if self.st == S_IDLE:
             sp = np.zeros(3)
-            if start and host_ok:
+            if start and host_ok and t >= self.tare_s:
                 self.ctr = self.m.copy() if self.auto else self.center0.copy()
                 self.tr, k = 1, 0
                 T = table[0]
@@ -85,7 +90,7 @@ class FsmExpt:
             sp = np.zeros(3)
             if not start:
                 self.st, self.t_enter = S_IDLE, t
-            elif t - self.t_enter >= T["random_s"]:
+            elif t - self.t_enter >= T["random_s"] and centred:
                 self.p0, self.p1 = np.zeros(3), np.zeros(3)
                 self.p1[1 if int(T["axis"]) == 1 else 0] = T["distance_mm"]
                 self.move_T = max(self.min_move, 1.875 * abs(T["distance_mm"]) / T["peak_speed_mm_s"])
@@ -100,8 +105,7 @@ class FsmExpt:
                 events += 2
         elif self.st == S_WAIT_COP:
             sp = self.p1.copy()
-            near = math.hypot(*(cop_xy - self.ctr)) < T["cop_radius_mm"]
-            self.stable = self.stable + dt if (valid and near and cop_sd < T["cop_sd_mm"]) else 0.0
+            self.stable = self.stable + dt if centred else 0.0
             timed_out = T.get("max_wait_s", 0.0) > 0 and t - self.t_enter >= T["max_wait_s"]
             if self.stable >= T["thresh_seconds_cop_stable"] or timed_out or not start:
                 self.p0, self.p1 = self.p1.copy(), np.zeros(3)
