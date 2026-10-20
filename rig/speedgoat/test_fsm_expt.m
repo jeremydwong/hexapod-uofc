@@ -5,7 +5,8 @@
 
 here = fileparts(mfilename('fullpath'));
 addpath(here);
-P = expt_params(fullfile(here, 'trials_example.csv'));
+P = expt_params();
+[TT, n_trials] = load_trials(fullfile(here, 'trials_example.csv'), P);
 clear fsm_expt                       % reset its persistent state
 
 dt = P.dt; t_end = 120;
@@ -20,7 +21,7 @@ for i = 1:n
     sway = sway - sway * dt / tau_sway + sway_sd * sqrt(2 * dt / tau_sway) * randn(1, 2);
     settled = settled + (sp(1:2) - settled) * dt / recover_s;
     cop = stance + sway - gain * (sp(1:2) - settled);
-    [sp, state, trial, ~, stable_s, cop_sd] = fsm_expt(t, t >= 2, 1, cop, 700, P);
+    [sp, state, trial, ~, stable_s, cop_sd] = fsm_expt(t, t >= 2, 1, cop, 700, TT, n_trials, P);
     log(i, :) = [t state trial sp(1) sp(2) cop cop_sd stable_s];
     if state == 5, log = log(1:i, :); break; end
 end
@@ -28,7 +29,7 @@ end
 states = log(:, 2);
 fprintf('Finished at t = %.1f s in state %d (5 = DONE) after %d trials\n', log(end, 1), states(end), log(end, 3));
 assert(states(end) == 5, 'trial list did not finish');
-for k = 1:P.T.n   % each trial must visit MOVETGT, WAIT_COP and RETURN
+for k = 1:n_trials   % each trial must visit MOVETGT, WAIT_COP and RETURN
     seen = unique(states(log(:, 3) == k));
     assert(all(ismember([2 3 4], seen)), 'trial %d skipped a state', k);
 end

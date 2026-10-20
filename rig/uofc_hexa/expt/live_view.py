@@ -3,7 +3,8 @@
 Listens for rig/speedgoat/pack_state.m packets on UDP (default port 25000) and redraws
 about 20 times a second. Top-down CoP with the trial's "near centre" circle and the running
 SD; top-down platform setpoint; and the last --window seconds of state, setpoint, CoP and
-SD against threshold with the stability timer.
+SD against threshold with the stability timer, and the raw analog inputs (V).
+hexapod-expt-run uses the same figure, plus Start/Stop buttons.
 
 Run: uv run hexapod-live                      (Windows may ask to allow Python through the firewall)
      uv run hexapod-live --snapshot out.png --seconds 20    (no window: save one frame)
@@ -25,15 +26,18 @@ ROW = {code: i for i, code in enumerate(STATE_COLORS)}  # evenly spaced rows in 
 
 
 class Receiver(threading.Thread):
-    def __init__(self, port, window_s):
+    def __init__(self, port, window_s, record=False):
         super().__init__(daemon=True)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)  # ride out plot redraws at 1 kHz
         self.sock.bind(("0.0.0.0", port))
         self.sock.settimeout(0.2)
         self.buf = deque(maxlen=int(window_s * 1000 * 1.2))
         self.lock = threading.Lock()
         self.received = self.bad = self.lost = 0
         self.last_seq = None
+        self.last = None  # latest packet (packet.State)
+        self.record = [] if record else None  # every packet, for saving after the run
         self.rate, self._count, self._t = 0.0, 0, time.perf_counter()
         self.stop = False
 
@@ -50,9 +54,12 @@ class Receiver(threading.Thread):
                 continue
             if self.last_seq is not None and s.seq > self.last_seq + 1:
                 self.lost += int(s.seq - self.last_seq - 1)
-            self.last_seq = s.seq
+            self.last_seq, self.last = s.seq, s
+            row = np.array([getattr(s, f) for f in packet.FIELDS])
             with self.lock:
-                self.buf.append(np.array([getattr(s, f) for f in packet.FIELDS]))
+                self.buf.append(row)
+                if self.record is not None:
+                    self.record.append(row)
             self.received += 1
             self._count += 1
             now = time.perf_counter()
@@ -66,12 +73,14 @@ class Receiver(threading.Thread):
 
 def build_figure():
     import matplotlib.pyplot as plt
-    fig = plt.figure(figsize=(14, 8))
-    gs = fig.add_gridspec(4, 3, width_ratios=[1, 1, 1.6], height_ratios=[0.8, 1, 1, 1], hspace=0.45, wspace=0.3)
+    fig = plt.figure(figsize=(15, 9.5))
+    gs = fig.add_gridspec(5, 3, width_ratios=[1, 1, 1.6], height_ratios=[0.8, 1, 1, 1, 1], hspace=0.5, wspace=0.3,
+                          bottom=0.1)
     ax = {"cop": fig.add_subplot(gs[:, 0]), "plat": fig.add_subplot(gs[:, 1]), "state": fig.add_subplot(gs[0, 2])}
     ax["sp"] = fig.add_subplot(gs[1, 2], sharex=ax["state"])
     ax["copt"] = fig.add_subplot(gs[2, 2], sharex=ax["state"])
     ax["sd"] = fig.add_subplot(gs[3, 2], sharex=ax["state"])
+    ax["ai"] = fig.add_subplot(gs[4, 2], sharex=ax["state"])
     a = ax["cop"]
     a.set_title("Centre of pressure (plate frame)"); a.set_xlabel("x (mm, + right)"); a.set_ylabel("y (mm, + front)")
     a.set_aspect("equal"); a.grid(alpha=.3)
@@ -83,8 +92,8 @@ def build_figure():
     ax["state"].set_yticks(list(ROW.values())); ax["state"].set_yticklabels([packet.STATES[k] for k in ROW], fontsize=7)
     ax["state"].set_ylim(-0.5, len(ROW) - 0.5); ax["state"].set_title("FSM state", fontsize=9)
     ax["sp"].set_ylabel("setpoint (mm)"); ax["copt"].set_ylabel("CoP − centre (mm)")
-    ax["sd"].set_ylabel("CoP SD (mm)"); ax["sd"].set_xlabel("time (s)")
-    for k in ("state", "sp", "copt", "sd"):
+    ax["sd"].set_ylabel("CoP SD (mm)"); ax["ai"].set_ylabel("analog in (V)"); ax["ai"].set_xlabel("time (s)")
+    for k in ("state", "sp", "copt", "sd", "ai"):
         ax[k].grid(alpha=.3)
     lines = {
         "cop_trail": ax["cop"].plot([], [], lw=.8, color="#2e86c1", alpha=.6)[0],
@@ -98,6 +107,7 @@ def build_figure():
         "sd": ax["sd"].plot([], [], label="SD", color="#8e44ad")[0],
         "sd_thr": ax["sd"].plot([], [], "--", color="#8e44ad", alpha=.6, label="SD threshold")[0],
         "stable": ax["sd"].plot([], [], color="#16a085", label="stable time (s)")[0],
+        **{f"ai{i}": ax["ai"].plot([], [], lw=.8, label=f"{i}")[0] for i in range(1, 13)},
     }
     import matplotlib.patches as mp
     circles = {"radius": mp.Circle((0, 0), 1, fill=False, color="#16a085", lw=1.5, ls="--"),
@@ -106,11 +116,12 @@ def build_figure():
         ax["cop"].add_patch(c)
     for k in ("sp", "copt", "sd"):
         ax[k].legend(loc="upper left", fontsize=7, ncol=3)
+    ax["ai"].legend(loc="upper left", fontsize=6, ncol=12, handlelength=1, columnspacing=0.8)
     title = fig.suptitle("waiting for packets...", fontsize=12)
     return fig, ax, lines, circles, title
 
 
-def update(rx, fig, ax, lines, circles, title, window_s, trail_s=5.0):
+def update(rx, fig, ax, lines, circles, title, window_s, trail_s=5.0, status=""):
     d = rx.snapshot()
     if d is None or len(d) < 2:
         title.set_text(f"waiting for packets on UDP {rx.sock.getsockname()[1]}...")
@@ -141,13 +152,18 @@ def update(rx, fig, ax, lines, circles, title, window_s, trail_s=5.0):
     lines["sp_surge"].set_data(ts, G("sp_surge")); lines["sp_sway"].set_data(ts, G("sp_sway"))
     lines["cop_dx"].set_data(ts, G("cop_x") - G("center_x")); lines["cop_dy"].set_data(ts, G("cop_y") - G("center_y"))
     lines["sd"].set_data(ts, G("cop_sd")); lines["sd_thr"].set_data(ts, G("sd_thr")); lines["stable"].set_data(ts, G("stable_s"))
-    for k in ("sp", "copt", "sd"):
+    for i in range(1, 13):
+        lines[f"ai{i}"].set_data(ts, G(f"ai{i}"))
+    for k in ("sp", "copt", "sd", "ai"):
         ax[k].relim(); ax[k].autoscale_view(scalex=False)
     ax["state"].set_xlim(t[-1] - window_s, t[-1] + 0.2)
     state = int(L("state"))
-    title.set_text(f"t {L('t'):7.1f} s   trial {int(L('trial'))}   {packet.STATES.get(state, state)} "
+    host = "host ok" if L("host_ok") else "NO HOST"
+    title.set_text(f"t {L('t'):7.1f} s   trial {int(L('trial'))}/{int(L('n_trials'))}   {packet.STATES.get(state, state)} "
                    f"({L('t_state'):.1f} s)   stable {L('stable_s'):.1f}/{L('stable_need'):.1f} s   "
-                   f"CoP SD {L('cop_sd'):.1f}/{L('sd_thr'):.1f} mm   |   {rx.rate:.0f} pkt/s, lost {rx.lost}, bad {rx.bad}")
+                   f"CoP SD {L('cop_sd'):.1f}/{L('sd_thr'):.1f} mm   Fz {L('fz_total'):.0f} N\n"
+                   f"{host}   table {int(L('n_loaded'))}/{int(L('n_trials'))}   |   "
+                   f"{rx.rate:.0f} pkt/s, lost {rx.lost}, bad {rx.bad}   {status}")
     title.set_color(STATE_COLORS.get(state, "#333"))
 
 

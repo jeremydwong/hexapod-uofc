@@ -14,11 +14,16 @@ import numpy as np
 S_IDLE, S_HOMED, S_MOVETGT, S_WAIT_COP, S_RETURN, S_DONE, S_FAULT = 0, 1, 2, 3, 4, 5, 9
 # Measured safe single-axis targets at home height (M10 limits minus 25 mm), as in load_trials.m.
 LIMITS_MM = {1: (-281.0, 248.0), 2: (-241.0, 241.0)}  # 1 surge, 2 sway
+COLUMNS = ["random_s", "axis", "distance_mm", "peak_speed_mm_s", "thresh_seconds_cop_stable",
+           "cop_radius_mm", "cop_sd_mm", "max_wait_s"]  # the order of TT in fsm_expt.m and host_rx.m
+ZERO_ROW = dict.fromkeys(COLUMNS, 0.0)
 
 
 def load_trials(path):
     rows = list(csv.DictReader(Path(path).open()))
     trials = [{k: float(v) for k, v in r.items()} for r in rows]
+    for t in trials:
+        t.setdefault("max_wait_s", 0.0)
     for i, t in enumerate(trials, 1):
         low, high = LIMITS_MM[int(t["axis"])]
         if not low <= t["distance_mm"] <= high:
@@ -41,7 +46,10 @@ class FsmExpt:
         self.move_T, self.stable = 1.0, 0.0
         self.m, self.v, self.ctr = np.zeros(2), np.zeros(2), self.center0.copy()
 
-    def step(self, t, start, host_ok, cop_xy, fz_total):
+    def step(self, t, start, host_ok, cop_xy, fz_total, trials=None):
+        """One 1 kHz step. trials: replace the table (as the Speedgoat's host_rx does while stopped)."""
+        if trials is not None:
+            self.trials = trials
         if self.t_enter is None:
             self.t_enter = self.last_t = t
         dt = max(t - self.last_t, 0.0)
@@ -55,9 +63,11 @@ class FsmExpt:
             self.m = self.m + a * d
             self.v = (1 - a) * (self.v + a * d ** 2)
         cop_sd = math.sqrt(self.v.sum())
-        n = len(self.trials)
+        n_trials = len(self.trials)
+        n = max(n_trials, 1)
+        table = self.trials or [ZERO_ROW]  # nothing loaded yet: zeros, like the padded table on the target
         k = min(max(self.tr, 1), n) - 1
-        T = self.trials[k]
+        T = table[k]
         sp = self.sp_last.copy()
 
         if not host_ok and self.st in (S_HOMED, S_MOVETGT, S_WAIT_COP, S_RETURN):
@@ -69,7 +79,7 @@ class FsmExpt:
             if start and host_ok:
                 self.ctr = self.m.copy() if self.auto else self.center0.copy()
                 self.tr, k = 1, 0
-                T = self.trials[0]
+                T = table[0]
                 self.st, self.t_enter = S_HOMED, t
         elif self.st == S_HOMED:
             sp = np.zeros(3)
@@ -92,7 +102,8 @@ class FsmExpt:
             sp = self.p1.copy()
             near = math.hypot(*(cop_xy - self.ctr)) < T["cop_radius_mm"]
             self.stable = self.stable + dt if (valid and near and cop_sd < T["cop_sd_mm"]) else 0.0
-            if self.stable >= T["thresh_seconds_cop_stable"] or not start:
+            timed_out = T.get("max_wait_s", 0.0) > 0 and t - self.t_enter >= T["max_wait_s"]
+            if self.stable >= T["thresh_seconds_cop_stable"] or timed_out or not start:
                 self.p0, self.p1 = self.p1.copy(), np.zeros(3)
                 self.move_T = max(self.min_move, 1.875 * np.max(np.abs(self.p0)) / self.return_speed)
                 self.st, self.t_enter = S_RETURN, t
@@ -104,10 +115,10 @@ class FsmExpt:
                 sp = np.zeros(3)
                 events += 8
                 self.tr += 1
-                self.st = S_IDLE if not start else (S_DONE if self.tr > n else S_HOMED)
+                self.st = S_IDLE if not start else (S_DONE if self.tr > n_trials else S_HOMED)
                 self.t_enter = t
                 k = min(self.tr, n) - 1
-                T = self.trials[k]
+                T = table[k]
         elif self.st == S_DONE:
             sp = np.zeros(3)
             if not start:

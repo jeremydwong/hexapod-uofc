@@ -1,7 +1,9 @@
-function T = load_trials(csv_path, max_trials)
-%LOAD_TRIALS Read a trial table CSV into a fixed-size struct for the FSM_EXPT block.
+function [TT, n] = load_trials(csv_path, P)
+%LOAD_TRIALS Read a trial table CSV into the 500 x 8 matrix that fsm_expt takes.
+%   [TT, n] = load_trials('trials_example.csv', expt_params())
+%   For desktop tests (test_fsm_expt.m). On the Speedgoat the host sends the table
+%   (hexapod-expt-run), and host_rx.m applies the same checks.
 %   Columns (header names must match; order does not matter):
-%     trial                      trial number (informational)
 %     random_s                   wait at home before the perturbation starts (s)
 %     axis                       1 = surge (+ front), 2 = sway (+ right)
 %     distance_mm                signed perturbation distance from home (mm)
@@ -9,39 +11,30 @@ function T = load_trials(csv_path, max_trials)
 %     thresh_seconds_cop_stable  CoP must stay stable this long before returning (s)
 %     cop_radius_mm              "near centre": |CoP - centre| below this (mm)
 %     cop_sd_mm                  "low variability": CoP running SD below this (mm)
-%
-%   Arrays are padded to max_trials so the generated code has fixed sizes; T.n is the
-%   number of real trials. Also checks every target against the safe excursion limits.
+%     max_wait_s                 optional: return anyway after this long (s); 0 = never
 
-if nargin < 2, max_trials = 500; end
+N_MAX = 500;
 tbl = readtable(csv_path);
-need = {'random_s', 'axis', 'distance_mm', 'peak_speed_mm_s', ...
-        'thresh_seconds_cop_stable', 'cop_radius_mm', 'cop_sd_mm'};
-missing = setdiff(need, tbl.Properties.VariableNames);
+cols = {'random_s', 'axis', 'distance_mm', 'peak_speed_mm_s', ...
+        'thresh_seconds_cop_stable', 'cop_radius_mm', 'cop_sd_mm', 'max_wait_s'};
+if ~ismember('max_wait_s', tbl.Properties.VariableNames)
+    tbl.max_wait_s = zeros(height(tbl), 1);
+end
+missing = setdiff(cols, tbl.Properties.VariableNames);
 assert(isempty(missing), 'Trial table %s is missing columns: %s', csv_path, strjoin(missing, ', '));
 n = height(tbl);
-assert(n >= 1 && n <= max_trials, 'Trial table needs 1..%d rows, has %d', max_trials, n);
-assert(all(ismember(tbl.axis, [1 2])), 'axis must be 1 (surge) or 2 (sway)');
-assert(all(tbl.peak_speed_mm_s > 0), 'peak_speed_mm_s must be positive');
-assert(all(tbl.random_s >= 0) && all(tbl.thresh_seconds_cop_stable > 0), 'times must be positive');
-
-% Safe single-axis targets at home height: measured limits on the M10 imitator
-% (surge -306 / +273, sway +/-266 mm) minus a 25 mm margin.
-limits = [-281 248; -241 241];  % rows: surge, sway
-for k = 1:n
-    lim = limits(tbl.axis(k), :);
-    assert(tbl.distance_mm(k) >= lim(1) && tbl.distance_mm(k) <= lim(2), ...
-        'Trial %d: %g mm on axis %d is outside the safe range [%g, %g]', ...
-        k, tbl.distance_mm(k), tbl.axis(k), lim(1), lim(2));
+assert(n >= 1 && n <= N_MAX, 'Trial table needs 1..%d rows, has %d', N_MAX, n);
+TT = zeros(N_MAX, 8);
+for j = 1:8
+    TT(1:n, j) = tbl.(cols{j});
 end
-
-pad = @(x) [x(:); zeros(max_trials - n, 1)];
-T.n = n;
-T.random_s = pad(tbl.random_s);
-T.axis = pad(tbl.axis);
-T.distance_mm = pad(tbl.distance_mm);
-T.peak_speed_mm_s = pad(tbl.peak_speed_mm_s);
-T.thresh_seconds_cop_stable = pad(tbl.thresh_seconds_cop_stable);
-T.cop_radius_mm = pad(tbl.cop_radius_mm);
-T.cop_sd_mm = pad(tbl.cop_sd_mm);
+for k = 1:n
+    ax = TT(k, 2);
+    assert(ax == 1 || ax == 2, 'Trial %d: axis must be 1 (surge) or 2 (sway)', k);
+    lim = P.limits_mm(ax, :);
+    assert(TT(k, 3) >= lim(1) && TT(k, 3) <= lim(2), ...
+        'Trial %d: %g mm on axis %d is outside the safe range [%g, %g]', k, TT(k, 3), ax, lim(1), lim(2));
+    assert(TT(k, 4) > 0 && TT(k, 4) <= P.max_peak_speed_mm_s, 'Trial %d: bad peak_speed_mm_s', k);
+    assert(TT(k, 1) >= 0 && TT(k, 5) > 0 && TT(k, 8) >= 0, 'Trial %d: bad times', k);
+end
 end

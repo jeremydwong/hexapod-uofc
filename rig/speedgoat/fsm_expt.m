@@ -1,13 +1,17 @@
 function [sp, state, trial, t_state, stable_s, cop_sd, center, events, radius, sd_thr, stable_need] = ...
-    fsm_expt(t, start, host_ok, cop_xy, fz_total, P)
+    fsm_expt(t, start, host_ok, cop_xy, fz_total, TT, n_trials, P)
 %FSM_EXPT Trial state machine for the perturbation experiment (MATLAB Function block, 1 kHz).
 %
 % Inputs
 %   t         experiment time (s), from a Digital Clock at P.dt
-%   start     run flag (tunable Constant, or from the host): 1 = run the trial list
-%   host_ok   1 while the host is alive and relaying (from host UDP); 0 stops motion
+%   start     run flag from host_rx: 1 = run the trial list
+%   host_ok   1 while the host heartbeat is alive (host_rx); 0 stops motion
 %   cop_xy    [x y] combined CoP (mm), plate frame, from cop_from_plates
 %   fz_total  total vertical force (N)
+%   TT        trial table from host_rx, one row per trial, columns:
+%             1 random_s  2 axis (1 surge, 2 sway)  3 distance_mm  4 peak_speed_mm_s
+%             5 thresh_seconds_cop_stable  6 cop_radius_mm  7 cop_sd_mm  8 max_wait_s
+%   n_trials  number of real rows in TT
 %   P         expt_params struct (block Parameter)
 %
 % Outputs
@@ -25,7 +29,7 @@ function [sp, state, trial, t_state, stable_s, cop_sd, center, events, radius, s
 % Sequence per trial: HOMED (wait random_s) -> MOVETGT (open-loop smoothstep to
 % distance_mm along the trial's axis at peak_speed_mm_s) -> WAIT_COP (until the CoP
 % has stayed within cop_radius_mm of the centre with running SD below cop_sd_mm for
-% thresh_seconds_cop_stable) -> RETURN (smoothstep home at P.return_speed_mm_s) ->
+% thresh_seconds_cop_stable, or for max_wait_s if that is > 0) -> RETURN (smoothstep home at P.return_speed_mm_s) ->
 % next trial, or DONE.
 % Stopping: start = 0 ends WAIT_COP early (returns home) and stops after the current
 % trial; host_ok = 0 freezes the setpoint (FAULT) until the model is restarted.
@@ -55,7 +59,8 @@ if valid
 end
 cop_sd = sqrt(v(1) + v(2));
 
-k = min(max(tr, 1), P.T.n);   % row of the current trial
+n = max(n_trials, 1);
+k = min(max(tr, 1), n);       % row of the current trial
 sp = sp_last;
 
 % Host lost while the experiment is running: freeze where we are.
@@ -80,11 +85,11 @@ switch st
         sp = zeros(1, 3);
         if ~start
             st = S_IDLE; t_enter = t;
-        elseif t - t_enter >= P.T.random_s(k)
+        elseif t - t_enter >= TT(k, 1)
             p0 = zeros(1, 3);
             p1 = zeros(1, 3);
-            p1(axis_index(P.T.axis(k))) = P.T.distance_mm(k);
-            move_T = max(P.min_move_s, 1.875 * abs(P.T.distance_mm(k)) / P.T.peak_speed_mm_s(k));
+            p1(axis_index(TT(k, 2))) = TT(k, 3);
+            move_T = max(P.min_move_s, 1.875 * abs(TT(k, 3)) / TT(k, 4));
             st = S_MOVETGT; t_enter = t; events = events + 1;
         end
 
@@ -99,13 +104,14 @@ switch st
 
     case S_WAIT_COP
         sp = p1;
-        near = sqrt(sum((cop_xy - ctr) .^ 2)) < P.T.cop_radius_mm(k);
-        if valid && near && cop_sd < P.T.cop_sd_mm(k)
+        near = sqrt(sum((cop_xy - ctr) .^ 2)) < TT(k, 6);
+        if valid && near && cop_sd < TT(k, 7)
             stable = stable + dt;
         else
             stable = 0;
         end
-        if stable >= P.T.thresh_seconds_cop_stable(k) || ~start
+        timed_out = TT(k, 8) > 0 && t - t_enter >= TT(k, 8);
+        if stable >= TT(k, 5) || timed_out || ~start
             p0 = p1;
             p1 = zeros(1, 3);
             move_T = max(P.min_move_s, 1.875 * max(abs(p0)) / P.return_speed_mm_s);
@@ -121,13 +127,13 @@ switch st
             tr = tr + 1;
             if ~start
                 st = S_IDLE;
-            elseif tr > P.T.n
+            elseif tr > n_trials
                 st = S_DONE;
             else
                 st = S_HOMED;
             end
             t_enter = t;
-            k = min(tr, P.T.n);
+            k = min(tr, n);
         end
 
     case S_DONE
@@ -142,13 +148,13 @@ end
 
 sp_last = sp;
 state = st;
-trial = min(tr, P.T.n);
+trial = min(tr, n);
 t_state = t - t_enter;
 stable_s = stable;
 center = ctr;
-radius = P.T.cop_radius_mm(k);
-sd_thr = P.T.cop_sd_mm(k);
-stable_need = P.T.thresh_seconds_cop_stable(k);
+radius = TT(k, 6);
+sd_thr = TT(k, 7);
+stable_need = TT(k, 5);
 end
 
 function s = smoothstep(u)

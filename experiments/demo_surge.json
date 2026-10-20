@@ -1,0 +1,43 @@
+{
+  "name": "demo_surge",
+  "description": "3 pairs of +/-50 mm surges at 100 mm/s peak, each followed by a return to home. max_wait_s returns after 6 s even if the CoP never settles (uncalibrated plates, nobody standing).",
+  "defaults": {
+    "peak_speed_mm_s": 100.0,
+    "thresh_seconds_cop_stable": 1.0,
+    "cop_radius_mm": 30.0,
+    "cop_sd_mm": 5.0,
+    "max_wait_s": 6.0
+  },
+  "trials": [
+    {
+      "axis": "surge",
+      "distance_mm": 50.0,
+      "random_s": 3.27
+    },
+    {
+      "axis": "surge",
+      "distance_mm": -50.0,
+      "random_s": 2.54
+    },
+    {
+      "axis": "surge",
+      "distance_mm": 50.0,
+      "random_s": 2.08
+    },
+    {
+      "axis": "surge",
+      "distance_mm": -50.0,
+      "random_s": 2.03
+    },
+    {
+      "axis": "surge",
+      "distance_mm": 50.0,
+      "random_s": 3.63
+    },
+    {
+      "axis": "surge",
+      "distance_mm": -50.0,
+      "random_s": 3.83
+    }
+  ]
+}
