@@ -47,6 +47,7 @@ class Device:
         self.s, self.run_byte, self.speed = s, bytes([run_byte]), speed
         self.lib = ct.CDLL(str(Path(library).resolve()))
         self.api = None
+        self.read_failures, self.read_error = 0, 0  # failed pose reads (test_from_park.soft_read)
         specs = {
             "Create": (ct.c_void_p, []), "Delete": (None, [ct.c_void_p]),
             "ConnectToUsbDevice": (ct.c_char, [ct.c_void_p, ct.c_wchar_p, ct.c_wchar_p]),
@@ -71,6 +72,11 @@ class Device:
             if ip:
                 self.call("ConnectToNetworkDevice", ip.encode("ascii"))
             else:
+                busy = vendor.running_ms_services()
+                if busy:
+                    raise RuntimeError(f"{' and '.join(busy)} running: they share the USB link with us. "
+                                       "Run stop_ms_processes.bat (repo root) first; "
+                                       "start_ms_processes.bat restores them for ForceSeatPM.")
                 # NULL name, as in the vendor's PrecisePos_CPP_Win; NULL serial = any attached device.
                 wanted = None if serial in (None, "", "any") else serial
                 if self.lib.ForceSeatDI_ConnectToUsbDevice(self.api, None, wanted) != b"\x01":

@@ -14,7 +14,8 @@ Sequence:
 With --hexapod the host also relays the setpoint to the platform (relay.py): it checks every
 protocol target (paused) and lifts to home before Start is allowed, streams the Speedgoat's
 setpoint at 100 Hz during the run, and lowers and parks after it. Without it, the platform
-is not touched.
+is not touched. With --hexapod (or --scene) a meshcat 3D view (scene3d.py) shows the pose the
+relay reads back, the setpoint and the plate forces.
 
 Run: uv run hexapod-expt-run --protocol experiments/demo_surge.json
      uv run hexapod-expt-run --hexapod --protocol experiments/demo_fast.json   (the platform, USB)
@@ -27,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import threading
 import time
 
@@ -37,7 +39,7 @@ from uofc_hexa.expt import command, packet, protocol, relay
 from uofc_hexa.hexapod import level_move as lm
 from uofc_hexa.hexapod import test_from_park as tfp
 from uofc_hexa.expt.fsm import S_DONE, S_FAULT, S_IDLE
-from uofc_hexa.expt.live_view import Receiver, build_figure, update
+from uofc_hexa.expt.live_view import Receiver, animate, build_figure, start_scene, stop_scene, update
 
 SPEEDGOAT_DIR = Path(__file__).resolve().parents[2] / "speedgoat"
 
@@ -88,7 +90,7 @@ class Session:
 
     def start(self):
         s = self.rx.last
-        relay_ok = self.relay is None or (self.relay.ready and not self.relay.fault)
+        relay_ok = self.relay is None or (self.relay.ready and not self.relay.fault and not self.relay.blind)
         if s is not None and self.loaded(s) and int(s.state) in (S_IDLE, S_DONE) and relay_ok:
             self.cmd.start_flag, self.started, self.done_at = True, True, None
             print("Start sent")
@@ -108,6 +110,9 @@ class Session:
         if self.relay is not None and self.relay.fault:
             self.cmd.start_flag = False
             self.status = f"HEXAPOD RELAY FAULT, platform paused: {self.relay.fault}"
+        elif self.relay is not None and self.relay.blind:
+            self.cmd.start_flag = False  # Speedgoat finishes this trial's return, then idles
+            self.status = f"{self.relay.blind}: stopped after this trial; close the window to lower and park"
         elif int(s.n_rejected):
             self.status = f"Speedgoat REJECTED {int(s.n_rejected)} rows (limits): fix the protocol"
         elif not self.loaded(s):
@@ -181,6 +186,8 @@ def main():
     parser.add_argument("--headless", metavar="PNG", help="no window: run, then save the last frame here")
     parser.add_argument("--timeout", type=float, default=600.0, help="headless: give up after this many s")
     parser.add_argument("--out", default="output/expt", help="where the recorded stream is saved")
+    parser.add_argument("--scene", action=argparse.BooleanOptionalAction, default=None,
+                        help="meshcat 3D scene in the browser (default: on with --hexapod)")
     hexa = parser.add_argument_group("hexapod relay (off unless --hexapod)")
     hexa.add_argument("--hexapod", action="store_true", help="lift, relay the setpoint to the platform, park")
     hexa.add_argument("--library", default=vendor.default_library(),
@@ -197,7 +204,9 @@ def main():
     hexa.add_argument("--tilt-limit", type=float, default=1.0,
                       help="pause if reported roll/pitch/yaw exceeds this during the run, deg (fast moves "
                            "show transient tilt: up to 0.46 deg on the M10)")
-    hexa.add_argument("--lift-rate", type=float, default=10.0, help="lift/lower setpoint rate, mm/s")
+    hexa.add_argument("--lift-rate", type=float, default=50.0, help="lift/lower peak speed, mm/s (165 mm: ~6 s at 50)")
+    hexa.add_argument("--accel-profile", choices=list(lm.ACCEL_PROFILES), default="auto",
+                      help="FSDI accelerationProfile: shape of the controller's start/stop ramps")
     args = parser.parse_args()
     if args.hexapod and not args.library:
         parser.error(f"--hexapod needs --library (or ${vendor.LIBRARY_ENV})")
@@ -223,15 +232,19 @@ def main():
                 cmd.running = rx.stop = True
                 raise SystemExit(f"No state packets on UDP {args.port} after 30 s; hexapod not touched")
             time.sleep(0.1)
-        device = lm.Device(args.library, args.ip, args.serial, args.run_byte, args.max_speed, 0, tfp.LIFT_BOUND_MM)
+        device = lm.Device(args.library, args.ip, args.serial, args.run_byte, args.max_speed,
+                           lm.ACCEL_PROFILES[args.accel_profile], tfp.LIFT_BOUND_MM)
         try:
             hexapod = relay.Relay(device, rx, trials, lift_rate=args.lift_rate, tilt_limit_deg=args.tilt_limit)
             hexapod.prepare()
-        except BaseException:
+        except BaseException as error:
             device.close()
             cmd.running = rx.stop = True
+            if device.read_failures or "SDK error 2" in str(error):
+                vendor.reset_platform_usb()
             raise
         hexapod.start()
+    scene = start_scene(rx, hexapod) if (args.hexapod if args.scene is None else args.scene) else None
     session = Session(rx, cmd, trials, args.auto_start or bool(args.headless),
                       args.exit_when_done or bool(args.headless), relay=hexapod)
     last_status = None
@@ -254,39 +267,49 @@ def main():
             while not session.finished and time.perf_counter() - t0 < args.timeout:
                 tick()
                 time.sleep(0.05)
-            update(rx, fig, ax, lines, circles, title, args.window, status=session.status, pose=hexapod)
+            update(rx, fig, ax, lines, circles, title, args.window, status=session.status)
             fig.savefig(args.headless, dpi=90)
             print(f"Saved {args.headless}")
         else:
-            from matplotlib.animation import FuncAnimation
             from matplotlib.widgets import Button
             b_start = Button(fig.add_axes([0.02, 0.02, 0.08, 0.045]), "Start", color="#d5f5e3")
             b_stop = Button(fig.add_axes([0.11, 0.02, 0.08, 0.045]), "Stop", color="#fadbd8")
             b_start.on_clicked(lambda _: session.start())
             b_stop.on_clicked(lambda _: session.stop())
 
-            def frame(_):
+            def frame():
                 tick()
-                update(rx, fig, ax, lines, circles, title, args.window, status=session.status, pose=hexapod)
+                full = update(rx, fig, ax, lines, circles, title, args.window, status=session.status)
                 if session.finished:
+                    timer.stop()
                     plt.close(fig)
+                    return False
+                return full
 
-            anim = FuncAnimation(fig, frame, interval=50, cache_frame_data=False)
+            timer = animate(fig, lines, circles, title, frame)
             plt.show()
-            del anim
+            timer.stop()
     except KeyboardInterrupt:
         pass
     finally:
         print("Shutting down: Start = 0, waiting for the Speedgoat to idle")
+        stop_scene(scene)
         shutdown(rx, cmd)
         if hexapod is not None:
             try:
                 print("Lowering and parking the hexapod")
                 hexapod.finish()
+            except Exception as error:  # still save the log below (a lost log hid the 14:09 fault)
+                print(f"Lowering/parking failed: {error}; platform paused, use the E-stop if needed",
+                      file=sys.stderr)
             finally:
                 device.close()
         rx.stop = True
         save(rx, args.out, name, hexapod)
+        if device is not None and device.read_failures:
+            print(f"{device.read_failures} pose reads failed (SDK error {device.read_error}): "
+                  "resetting the controller's USB link")
+            vendor.reset_platform_usb()
 
 
 if __name__ == "__main__":

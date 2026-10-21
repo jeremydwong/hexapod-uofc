@@ -4,6 +4,9 @@ function start_expt_rt(rebuild)
 %   start_expt_rt(true)    always regenerates the model and rebuilds
 %   From the host: uv run hexapod-expt-run --start-target   (runs this in matlab -batch)
 %
+%   After load, expt_cal.m is pushed onto the target (apply_expt_cal), so calibration edits
+%   never need a rebuild; they are excluded from the staleness check.
+%
 %   The app then runs until stopped (StopTime Inf), idle until the host sends a trial
 %   table and Start. Stop it with: tg = slrealtime; stop(tg)
 %   To skip MATLAB on later sessions, make it boot with the target:
@@ -17,13 +20,15 @@ mdl = 'expt_rt';
 app = fullfile(here, [mdl '.mldatx']);
 
 sources = [dir(fullfile(here, '*.m')); dir(fullfile(here, '..', '..', 'simulink', 'ReadForcePlates.slx'))];
-sources = sources(~startsWith({sources.name}, 'test_'));
+sources = sources(~startsWith({sources.name}, 'test_') & ...
+                  ~ismember({sources.name}, {'expt_cal.m', 'apply_expt_cal.m', 'retare_expt.m'}));
 built = dir(app);
 stale = isempty(built) || any([sources.datenum] > built.datenum);
 if rebuild || stale
     build_expt_rt();
     [P, ~] = expt_params();
     assignin('base', 'P', P);
+    expt_tunables();
     slbuild(mdl);
 end
 
@@ -34,6 +39,7 @@ if isRunning(tg)
     stop(tg);
 end
 load(tg, mdl);
+apply_expt_cal(tg);
 start(tg);
 fprintf('%s is running on %s. Now: uv run hexapod-expt-run\n', mdl, tg.TargetSettings.address);
 end

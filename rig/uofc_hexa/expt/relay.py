@@ -5,10 +5,12 @@ the ForceSeatDI SDK, a Windows DLL, and the Speedgoat runs QNX. So the host forw
 
   before Start   connect; paused FullMatch check of every protocol target (nothing moves on a
                  rejection); lift from park to home (0,0,0) at --lift-rate
-  during run     every 10 ms: read the platform (state gate, ±bound, tilt), take the newest
-                 state packet's setpoint, slew-limit it, send it. Stale stream (> STALE_HOLD_S)
-                 holds the last command; > STALE_FAULT_S, a Speedgoat FAULT, or any SDK/limit
-                 error pauses the platform and faults the relay.
+  during run     every 10 ms: take the newest state packet's setpoint, slew-limit it, send it;
+                 every 50 ms read the platform (state gate, ±bound, tilt). Stale stream
+                 (> STALE_HOLD_S) holds the last command; > STALE_FAULT_S, a Speedgoat FAULT, a
+                 failed send or a bad reading pauses the platform and faults the relay. A failed
+                 READ (SDK error 2: readback dead, sends still work) is logged and streaming goes
+                 on unmonitored; dead for tfp.READ_DEAD_S, the run stops after the current trial.
   after the run  stream from the last command down to the park height, then Park.
 Loop stalls under tfp.STALL_ABORT_S (Windows hiccups) hold the last command and are counted;
 the slew step uses at most 2 loop periods, so the command never jumps after one.
@@ -33,7 +35,8 @@ STALE_HOLD_S = 0.05  # no new state packet for this long: hold the last command
 STALE_FAULT_S = 0.5  # ... for this long: pause the platform, fault
 MAX_SLEW_MM_S = 600.0  # guard on the setpoint itself (protocol peak speeds are <= 500 mm/s)
 FIELDS = ["t", "sg_t", "sg_state", "sp_sway", "sp_surge", "sp_heave", "cmd_sway", "cmd_surge", "cmd_heave",
-          "act_sway", "act_surge", "act_heave", "roll", "pitch", "yaw", "dev_state"]
+          "act_sway", "act_surge", "act_heave", "roll", "pitch", "yaw", "dev_state", "read_err"]
+# act_*/roll/pitch/yaw/dev_state: last good 20 Hz reading; read_err: SDK code of the latest read (0 = ok)
 
 
 def protocol_waypoints(trials):
@@ -50,7 +53,7 @@ def protocol_waypoints(trials):
 class Relay(threading.Thread):
     """Lift on prepare(); run() streams the Speedgoat setpoint until stop; finish() lowers and parks."""
 
-    def __init__(self, device, rx, trials, lift_rate=10.0, margin_mm=tfp.BOUND_MARGIN_MM,
+    def __init__(self, device, rx, trials, lift_rate=50.0, margin_mm=tfp.BOUND_MARGIN_MM,
                  tilt_limit_deg=lm.TILT_LIMIT_DEG):
         super().__init__(daemon=True)
         self.device, self.rx = device, rx
@@ -63,6 +66,7 @@ class Relay(threading.Thread):
         self.stalls = []  # (time s, gap ms) of loop iterations over lm.DEADLINE_S
         self.ready = False  # homed and streaming: Start may be sent
         self.fault = None  # message, once the relay has paused the platform
+        self.blind = None  # message, once readback has been dead READ_DEAD_S: stop after this trial
         self.running = True
         self.rows, self.log, self.states = [], [], []
         self.parked = None
@@ -95,6 +99,8 @@ class Relay(threading.Thread):
         d, dt_nom = self.device, lm.DT
         begin = previous = time.monotonic()
         last_count, last_new = self.rx.received, begin
+        actual, rpy, state = np.full(3, np.nan), np.full(3, np.nan), 0  # last good reading
+        dead_since, read_err = None, 0
         try:
             self.ready = True
             k = 0
@@ -109,12 +115,27 @@ class Relay(threading.Thread):
                     self.stalls.append((self.t(), 1000 * gap))
                     print(f"relay: loop stalled {1000 * gap:.0f} ms; command held, continuing", file=sys.stderr)
                 dt, previous = min(gap, 2 * dt_nom), now
-                actual, rpy, _, state = tfp.lenient_read(d, self.tilt_limit)
-                self.pose = (actual, rpy, state)
-                if state & (lm.STATE_PAUSED | lm.STATE_PARK_MASK):
-                    raise RuntimeError(f"hexapod paused or parked during the run; state=0x{state:x}")
-                if np.max(np.abs(actual)) > self.bound:
-                    raise RuntimeError(f"reported pose {np.round(actual, 2)} outside ±{self.bound:g} mm")
+                if k % tfp.READ_EVERY == 0:
+                    xyz, r, st, err = tfp.soft_read(d, self.tilt_limit)
+                    if st is not None:
+                        state = st
+                        if state & (lm.STATE_PAUSED | lm.STATE_PARK_MASK):
+                            raise RuntimeError(f"hexapod paused or parked during the run; state=0x{state:x}")
+                    if xyz is None:
+                        if err != d.read_error:
+                            print(f"relay: platform readback failed (SDK error {err}); streaming on "
+                                  "unmonitored (pose, tilt and 3D view frozen)", file=sys.stderr)
+                            d.read_error = err
+                        dead_since = dead_since or now
+                        if now - dead_since > tfp.READ_DEAD_S and not self.blind:
+                            self.blind = f"platform readback dead {tfp.READ_DEAD_S:g} s (SDK error {err})"
+                            print(f"relay: {self.blind}; stopping after the current trial", file=sys.stderr)
+                    else:
+                        actual, rpy, dead_since = xyz, r, None
+                        self.pose = (actual, rpy, state)
+                        if np.max(np.abs(actual)) > self.bound:
+                            raise RuntimeError(f"reported pose {np.round(actual, 2)} outside ±{self.bound:g} mm")
+                    read_err = err
                 s = self.rx.last
                 if self.rx.received != last_count:
                     last_count, last_new = self.rx.received, now
@@ -131,7 +152,7 @@ class Relay(threading.Thread):
                     self.command = self.command + np.clip(sp - self.command, -step, step)
                 d.send(self.command)
                 self.rows.append([self.t(), s.t if s else np.nan, s.state if s else np.nan, *sp,
-                                  *self.command, *actual, *rpy, state])
+                                  *self.command, *actual, *rpy, state, read_err])
         except BaseException as error:
             self.fault = str(error)
             print(f"RELAY FAULT: {error}; pausing the hexapod", file=sys.stderr)

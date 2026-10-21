@@ -48,3 +48,57 @@ def default_library():
         return os.environ[LIBRARY_ENV]
     found = sorted((Path.home() / "Documents" / "MotionSystems").glob("ForceSeatDI_*/ForceSeatDI64.dll"))
     return str(found[-1]) if found else None
+
+
+MS_SERVICES = ("MotionSystems Com64", "MotionSystems AppWatcher64")
+
+
+def running_ms_services():
+    """Motion Systems' ForceSeatPM services that are running (Windows only; [] elsewhere).
+
+    They share the platform's USB link with our ForceSeatDI connection, and come back on their
+    own (seen after a USB replug, 2026-10-21); stop_ms_processes.bat stops them.
+    """
+    if sys.platform != "win32":
+        return []
+    import subprocess
+    running = []
+    for name in MS_SERVICES:
+        out = subprocess.run(["sc", "query", name], capture_output=True, text=True).stdout
+        if "RUNNING" in out:
+            running.append(name)
+    return running
+
+
+PLATFORM_USB_ID = r"USB\VID_0483&PID_A110\*"  # ForceSeatMP1 controllers (PS-6TL-350, M10)
+
+
+def reset_platform_usb():
+    """Re-enumerate the controller's USB device: revives a dead SDK readback (error 2).
+
+    pnputil /remove-device + /scan-devices = a software replug (~1 s). Needs Administrator and no
+    open ForceSeatDI handle (close the Device first; Motion Systems services stopped), else Windows
+    defers it to a reboot. Without admin, prints the commands instead. Returns True if it ran.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    import subprocess
+    ps = ["powershell", "-NoProfile", "-Command"]
+    ids = subprocess.run(ps + [f"(Get-PnpDevice -PresentOnly -InstanceId '{PLATFORM_USB_ID}').InstanceId"],
+                         capture_output=True, text=True).stdout.split()
+    if not ids:
+        print("USB reset: no controller present; replug its USB cable")
+        return False
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        print("USB reset needs Administrator. In an admin PowerShell (or replug the cable):")
+        for i in ids:
+            print(f'  pnputil /remove-device "{i}"')
+        print("  pnputil /scan-devices")
+        return False
+    for i in ids:
+        out = subprocess.run(["pnputil", "/remove-device", i], capture_output=True, text=True).stdout
+        print("USB reset:", " ".join(out.split())[-120:])
+    out = subprocess.run(["pnputil", "/scan-devices"], capture_output=True, text=True).stdout
+    print("USB reset:", " ".join(out.split())[-80:])
+    return True

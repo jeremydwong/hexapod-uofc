@@ -3,6 +3,8 @@ function build_expt_rt()
 %   The .slx is generated, not hand-edited: git tracks this script and the block .m files.
 %   Re-run after changing any block .m file or P.ai_channels; other P changes only need a
 %   rebuild (start_expt_rt.m does it when sources are newer than the build).
+%   Calibration (expt_cal.m) is NOT built in: the CAL_* Constant blocks read tunable
+%   Simulink.Parameters (expt_tunables.m) that start_expt_rt / apply_expt_cal set on the target.
 %
 %   The IO324 blocks and the config set (speedgoat.tlc, 1 ms fixed step) are copied from
 %   simulink/ReadForcePlates.slx, the lab's working analog-input test, then widened to
@@ -11,6 +13,8 @@ function build_expt_rt()
 %   Diagram (all at P.dt = 1 ms):
 %     UDP Receive (port net.cmd_port) --data,len--> host_rx --start, host_ok, TT, n...--> fsm_expt
 %     IO324 Analog input (P.ai_channels) --volts--> cop_from_plates --cop_xy, fz--> fsm_expt
+%     CAL_C1, CAL_C2, CAL_ORIGIN_MM, CAL_DZ_MM, CAL_TARE_SEQ --> cop_from_plates
+%     CAL_MIN_FZ_N, CAL_NOISE_FLOOR_N --> fsm_expt
 %     Digital Clock --t--> host_rx, fsm_expt, pack_state
 %     fsm_expt + host_rx echo + zeroed volts --> pack_state --312 bytes--> UDP Send (net.host_ip:net.state_port)
 %   Logged to the target's file log: raw and zeroed volts, CoP, Fz, setpoint, state, trial, events, start, host_ok.
@@ -21,6 +25,7 @@ mdl = 'expt_rt';
 ref = 'ReadForcePlates';
 [P, net] = expt_params();
 assignin('base', 'P', P);
+tunables = expt_tunables();   % CAL_* Simulink.Parameters (ExportedGlobal) in the base workspace
 load_system(fullfile(here, '..', '..', 'simulink', [ref '.slx']));
 if bdIsLoaded(mdl)
     close_system(mdl, 0);
@@ -84,7 +89,21 @@ for k = 1:n_ai
 end
 add_line(mdl, 'AiMux/1', 'cop_from_plates/1', 'autorouting', 'on');
 
-% fsm_expt(t, start, host_ok, cop_xy, fz_total, TT, n_trials, P)
+% Tunable calibration: one Constant block per CAL_* parameter. Sample time P.dt (not inf) so a
+% setparam on the target reaches the block outputs on the next step.
+% cop_from_plates(volts, C1, C2, origin_mm, dz_mm, tare_seq, P); fsm_expt(..., min_fz, noise_floor, P)
+dest = {'CAL_C1', 'cop_from_plates/2'; 'CAL_C2', 'cop_from_plates/3'; 'CAL_ORIGIN_MM', 'cop_from_plates/4'; ...
+        'CAL_DZ_MM', 'cop_from_plates/5'; 'CAL_TARE_SEQ', 'cop_from_plates/6'; ...
+        'CAL_MIN_FZ_N', 'fsm_expt/8'; 'CAL_NOISE_FLOOR_N', 'fsm_expt/9'};
+assert(isempty(setxor(dest(:, 1), tunables(:, 1))), 'build_expt_rt: wire every CAL_* from expt_tunables');
+for k = 1:size(dest, 1)
+    y = 560 + 40 * k;
+    add_block('simulink/Sources/Constant', [mdl '/' dest{k, 1}], 'Value', dest{k, 1}, ...
+        'SampleTime', num2str(P.dt), 'Position', [380 y 520 y + 25]);
+    add_line(mdl, [dest{k, 1} '/1'], dest{k, 2}, 'autorouting', 'on');
+end
+
+% fsm_expt(t, start, host_ok, cop_xy, fz_total, TT, n_trials, min_fz, noise_floor, P)
 add_line(mdl, 'Clock/1', 'fsm_expt/1', 'autorouting', 'on');
 add_line(mdl, 'host_rx/1', 'fsm_expt/2', 'autorouting', 'on');
 add_line(mdl, 'host_rx/2', 'fsm_expt/3', 'autorouting', 'on');

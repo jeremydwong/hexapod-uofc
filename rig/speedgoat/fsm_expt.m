@@ -1,5 +1,5 @@
 function [sp, state, trial, t_state, stable_s, cop_sd, center, events, radius, sd_thr, stable_need] = ...
-    fsm_expt(t, start, host_ok, cop_xy, fz_total, TT, n_trials, P)
+    fsm_expt(t, start, host_ok, cop_xy, fz_total, TT, n_trials, min_fz, noise_floor, P)
 %FSM_EXPT Trial state machine for the perturbation experiment (MATLAB Function block, 1 kHz).
 %
 % Inputs
@@ -12,6 +12,8 @@ function [sp, state, trial, t_state, stable_s, cop_sd, center, events, radius, s
 %             1 random_s  2 axis (1 surge, 2 sway)  3 distance_mm  4 peak_speed_mm_s
 %             5 thresh_seconds_cop_stable  6 cop_radius_mm  7 cop_sd_mm  8 max_wait_s
 %   n_trials  number of real rows in TT
+%   min_fz    CoP gates need at least this total Fz (N); tunable CAL_MIN_FZ_N (expt_cal.m)
+%   noise_floor  below this total Fz the plates are empty (N); tunable CAL_NOISE_FLOOR_N
 %   P         expt_params struct (block Parameter)
 %
 % Outputs
@@ -32,9 +34,9 @@ function [sp, state, trial, t_state, stable_s, cop_sd, center, events, radius, s
 % has stayed within cop_radius_mm of the centre with running SD below cop_sd_mm for
 % thresh_seconds_cop_stable, or for max_wait_s if that is > 0) -> RETURN (smoothstep home at P.return_speed_mm_s) ->
 % next trial, or DONE.
-% Unloaded override: with fz_total below P.noise_floor_N (nobody on the plates) both CoP
+% Unloaded override: with fz_total below noise_floor (nobody on the plates) both CoP
 % gates pass, so the protocol runs on an empty platform (start gate at once; return after
-% thresh_seconds_cop_stable). Loads between the noise floor and P.min_fz_N wait.
+% thresh_seconds_cop_stable). Loads between noise_floor and min_fz wait.
 % Start is ignored until t >= P.tare_s, while cop_from_plates zeroes the load cells.
 % Stopping: start = 0 ends WAIT_COP early (returns home) and stops after the current
 % trial; host_ok = 0 freezes the setpoint (FAULT) until the model is restarted.
@@ -55,7 +57,7 @@ last_t = t;
 events = 0;
 
 % Running mean and variance of the CoP (exponentially weighted, time constant cop_tau_s).
-valid = fz_total >= P.min_fz_N;
+valid = fz_total >= min_fz;
 if valid
     a = min(dt / P.cop_tau_s, 1);
     d = cop_xy - m;
@@ -63,7 +65,7 @@ if valid
     v = (1 - a) * (v + a * d .^ 2);
 end
 cop_sd = sqrt(v(1) + v(2));
-unloaded = fz_total < P.noise_floor_N;
+unloaded = fz_total < noise_floor;
 
 n = max(n_trials, 1);
 k = min(max(tr, 1), n);       % row of the current trial

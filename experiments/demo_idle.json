@@ -1,0 +1,17 @@
+{
+  "name": "demo_idle",
+  "description": "Idle soft-start check: the demo_fast surge (+100 mm at 500 mm/s, 0.375 s) after 5, 15, 25 and 40 s at home. In demo_fast the first move after ~20+ s idle lagged 1.2 s; the others 45-90 ms. Run with the plates empty so the CoP gate is overridden and the wait is just random_s.",
+  "defaults": {
+    "peak_speed_mm_s": 500.0,
+    "thresh_seconds_cop_stable": 1.0,
+    "cop_radius_mm": 30.0,
+    "cop_sd_mm": 5.0,
+    "max_wait_s": 6.0
+  },
+  "trials": [
+    {"axis": "surge", "distance_mm": 100.0, "random_s": 5.0},
+    {"axis": "surge", "distance_mm": 100.0, "random_s": 15.0},
+    {"axis": "surge", "distance_mm": 100.0, "random_s": 25.0},
+    {"axis": "surge", "distance_mm": 100.0, "random_s": 40.0}
+  ]
+}

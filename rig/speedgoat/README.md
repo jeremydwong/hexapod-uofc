@@ -45,7 +45,13 @@ heartbeat until the Speedgoat is idle, and saves the stream to `output/expt/<nam
 
 **Plates empty when the app starts:** `cop_from_plates` zeroes the load cells over the first
 `P.tare_s` (2 s) and the FSM ignores Start until then. The host plots the zeroed volts. To
-re-zero, restart the app.
+re-zero without a restart (plates empty, idle): `retare_expt`.
+
+**Calibration is tunable, no rebuild:** gains `C1`/`C2`, plate centres, `dz`, `min_fz_N` and
+`noise_floor_N` live in `expt_cal.m`. `start_expt_rt` pushes them after every load; to change
+them on the running app, edit `expt_cal.m` and run `apply_expt_cal`. They reach the model as
+`CAL_*` Simulink.Parameters (`expt_tunables.m`, ExportedGlobal) read by Constant blocks, and
+editing them never makes the build stale.
 
 With `--hexapod --run-byte 0` (plus `--ip 10.1.1.75` for the platform on Ethernet; default is
 the M10 imitator on USB) the host also drives the platform (`rig/uofc_hexa/expt/relay.py`):
@@ -86,7 +92,11 @@ which means a rebuild (minutes) for every protocol change.
 | `fsm_expt.m` | MATLAB Function block: the trial state machine and open-loop setpoints |
 | `cop_from_plates.m` | MATLAB Function block: tare, then analog inputs → combined CoP and total Fz |
 | `pack_state.m` | MATLAB Function block: the 39-double state packet, as bytes |
-| `expt_params.m` | Parameters `P` (limits, CoP filter, AI channels, plate calibration) and `net` |
+| `expt_params.m` | Build-time parameters `P` (limits, CoP filter, AI channels, plate channels) and `net` |
+| `expt_cal.m` | Tunable calibration: plate gains, centres, dz, `min_fz_N`, `noise_floor_N` (no rebuild) |
+| `expt_tunables.m` | Creates the `CAL_*` Simulink.Parameters for the build |
+| `apply_expt_cal.m` | Pushes `expt_cal.m` onto the loaded or running app |
+| `retare_expt.m` | Re-zeroes the load cells on the running app (plates empty) |
 | `load_trials.m` | Trial CSV → table matrix, for the desktop tests |
 | `test_host_rx.m`, `test_fsm_expt.m` | Desktop tests (plain MATLAB, no Simulink) |
 
@@ -106,22 +116,22 @@ host_ok = 0 in HOMED/MOVETGT/WAIT_COP/RETURN --> FAULT (setpoint frozen; restart
 ```
 
 Moves are open-loop smoothsteps: duration = 1.875 × distance / peak speed (minimum 0.2 s).
-Heave stays 0. "CoP centred" (both gates) = total Fz at least `P.min_fz_N`, CoP within
+Heave stays 0. "CoP centred" (both gates) = total Fz at least `min_fz_N`, CoP within
 `cop_radius_mm` of the centre, running SD below `cop_sd_mm`. **Empty-plate override:** with total
-Fz below `P.noise_floor_N` both gates pass, so the protocol runs on an empty platform; loads
-between the noise floor and `P.min_fz_N` (someone stepping on or off) wait. `max_wait_s` still
+Fz below `noise_floor_N` both gates pass, so the protocol runs on an empty platform; loads
+between the noise floor and `min_fz_N` (both in `expt_cal.m`; someone stepping on or off) wait. `max_wait_s` still
 lets a loaded trial return if the CoP never settles.
 
 ## Before a real run
 
 1. **Force-channel map.** `simulink/ReadForcePlates.slx` reads only AI 3 of the IO324-200k
    (±5.12 V, single-ended). Set `P.ai_channels` to the plates' 12 channels, and
-   `P.plate(k).channels` to positions within that list. Fill in `C`, `origin_mm` and `dz_mm`, then
+   `P.plate_channels` rows to positions within that list. Fill in `C1`, `C2`, `origin_mm` and `dz_mm` in `expt_cal.m`, then
    check signs by standing on each corner while watching the analog and CoP panels.
 2. **UDP blocks.** Check the dialog values `build_expt_rt` lists (ports 25001 in, 25000 out to
    192.168.7.2). Speedgoat recommends a dedicated real-time Ethernet port for UDP if the target
    has one; the host-target link works for a demo. Avoid ports 1–1023 and 5500–5560.
-3. **Noise floor.** `P.noise_floor_N` (50 N) is a placeholder: set it from the zeroed, empty
+3. **Noise floor.** `noise_floor_N` in `expt_cal.m` (50 N) is a placeholder: set it from the zeroed, empty
    plates' Fz noise once `C` is real.
 4. **Relay on hardware.** First on the M10 imitator, then the platform at a short protocol with
    the area clear and E-stop in hand. The relay runs on the host because the controller is only

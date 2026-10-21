@@ -25,6 +25,7 @@ hexapod-live = "uofc_hexa.expt.live_view:main"
 hexapod-expt-emulator = "uofc_hexa.expt.emulator:main"
 hexapod-expt-run = "uofc_hexa.expt.run_expt:main"
 hexapod-expt-protocol = "uofc_hexa.expt.protocol:main"
+kneel = "uofc_hexa.hexapod.kneel:main"
 
 [build-system]
 requires = ["hatchling"]

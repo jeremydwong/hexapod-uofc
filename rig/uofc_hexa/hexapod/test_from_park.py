@@ -36,6 +36,13 @@ PRECHECK_STEP_MM = 5.0
 # The controller just holds the last setpoint meanwhile, so stalls up to this long are logged and
 # ridden out; the slew step uses at most 2 loop periods, so the command never jumps after one.
 STALL_ABORT_S = 0.5
+# The SDK's pose/actuator readback can die mid-run (SDK error 2, 2026-10-20/21) while sends keep
+# working; only a USB re-enumeration revives it. Motion Systems' own examples ignore failed reads,
+# so streaming tolerates them: the platform keeps following the setpoint, unmonitored. Reads run
+# every READ_EVERY loops (20 Hz; sends stay 100 Hz) and skip the unused actuator read, to keep
+# USB traffic down.
+READ_EVERY = 5
+READ_DEAD_S = 30.0  # relay: readback dead this long -> stop after the current trial (placeholder)
 
 
 def lenient_read(device, tilt_limit_deg=lm.TILT_LIMIT_DEG):
@@ -59,6 +66,35 @@ def lenient_read(device, tilt_limit_deg=lm.TILT_LIMIT_DEG):
     if np.max(np.abs(xyz)) > limit or np.max(np.abs(rpy)) > np.deg2rad(tilt_limit_deg):
         raise RuntimeError(f"Pose outside ±{limit:g} mm / ±{tilt_limit_deg:g}° bounds")
     return xyz, rpy, np.array(list(act.actualMotorPosition), dtype=float), info.state
+
+
+def soft_read(device, tilt_limit_deg=lm.TILT_LIMIT_DEG):
+    """(xyz mm, rpy rad, state, sdk_error) without failing on a dead readback.
+
+    xyz/rpy are None (sdk_error = the SDK code) when the pose read fails; state is None when
+    GetPlatformInfo fails too. Still raises on module errors, offline/unreferenced, nonfinite
+    pose, ±bound and tilt: those are real readings, not missing ones.
+    """
+    lib, api, s = device.lib, device.api, device.s
+    info, state = lm.sized(s.FSDI_PlatformInfo), None
+    if lib.ForceSeatDI_GetPlatformInfo(api, ct.byref(info)) == b"\x01":
+        if info.moduleErrorCode:
+            raise RuntimeError(f"Module {info.moduleErrorIndex}: error {info.moduleErrorCode}")
+        if info.state & lm.STATE_OFFLINE or not info.state & lm.STATE_REF_RUN_DONE:
+            raise RuntimeError(f"Device offline or not referenced; state=0x{info.state:x}")
+        state = info.state
+    pose = lm.sized(s.FSDI_ActualTopTablePositionPhysical)
+    if lib.ForceSeatDI_GetTopTablePosPhy(api, ct.byref(pose)) != b"\x01":
+        device.read_failures += 1
+        return None, None, state, lib.ForceSeatDI_GetRecentErrorCode(api)
+    xyz = np.array([pose.sway, pose.surge, pose.heave], dtype=float)
+    rpy = np.array([pose.roll, pose.pitch, pose.yaw], dtype=float)
+    if not np.all(np.isfinite(np.r_[xyz, rpy])):
+        raise RuntimeError("Nonfinite pose feedback")
+    limit = max(device.bound, LIFT_BOUND_MM)
+    if np.max(np.abs(xyz)) > limit or np.max(np.abs(rpy)) > np.deg2rad(tilt_limit_deg):
+        raise RuntimeError(f"Pose outside ±{limit:g} mm / ±{tilt_limit_deg:g}° bounds")
+    return xyz, rpy, state, 0
 
 
 def parse_sequence(text):
@@ -114,7 +150,10 @@ def stream(device, start, end, rate, phase, t0, rows, states, hold=2., bound=Non
     duration = max(3., 1.875 * np.max(np.abs(end - start)) / rate)
     print(f"{phase}: {np.round(start, 2)} -> {np.round(end, 2)} mm over {duration:.1f} s")
     command, begin = start.copy(), time.monotonic()
+    far = np.max(np.abs(end - start)) > 5.  # a lift from near home (paused there) barely moves
     previous = begin
+    actual, rpy, state, t_read = start.copy(), np.zeros(3), 0, None  # last good reading
+    no_actuators = np.full(6, np.nan)  # actuator read dropped (see READ_EVERY)
     try:
         for k in range(int((duration + hold) / lm.DT) + 1):
             time.sleep(max(0, begin + k * lm.DT - time.monotonic()))
@@ -125,18 +164,28 @@ def stream(device, start, end, rate, phase, t0, rows, states, hold=2., bound=Non
             if k and gap > lm.DEADLINE_S:
                 print(f"{phase}: loop stalled {1000 * gap:.0f} ms; setpoint held, continuing", file=sys.stderr)
             dt, previous, t = (min(gap, 2 * lm.DT) if k else lm.DT), now, now - begin
-            actual, rpy, actuators, state = lenient_read(device)
-            if bound is not None:
-                if state & (lm.STATE_PAUSED | lm.STATE_PARK_MASK):
-                    raise RuntimeError(f"Device paused or parked during test; state=0x{state:x}")
-                if np.max(np.abs(actual)) > bound:
-                    raise RuntimeError(f"Reported pose {np.round(actual, 2)} outside ±{bound} mm test bound")
+            if k % READ_EVERY == 0:
+                xyz, r, st, err = soft_read(device)
+                if st is not None:
+                    state = st
+                    if bound is not None and state & (lm.STATE_PAUSED | lm.STATE_PARK_MASK):
+                        raise RuntimeError(f"Device paused or parked during test; state=0x{state:x}")
+                if xyz is None:
+                    if err != device.read_error:
+                        print(f"{phase}: platform readback failed (SDK error {err}); "
+                              "streaming on unmonitored", file=sys.stderr)
+                    device.read_error = err
+                else:
+                    actual, rpy, t_read = xyz, r, t
+                    if bound is not None and np.max(np.abs(actual)) > bound:
+                        raise RuntimeError(f"Reported pose {np.round(actual, 2)} outside ±{bound} mm test bound")
             reference = start + (end - start) * lm.smoothstep(t / duration)
             command = command + np.clip(reference - command, -rate * dt, rate * dt)
             device.send(command)
-            rows.append([t0(), phase, *reference, *actual, *command, *rpy, *actuators])
+            rows.append([t0(), phase, *reference, *actual, *command, *rpy, *no_actuators])
             states.append((t0(), state))
-            if phase == "lift" and t > STALL_S and np.max(np.abs(actual - start)) < 1.:
+            if (phase == "lift" and far and t > STALL_S and t_read is not None and t_read > STALL_S
+                    and np.max(np.abs(actual - start)) < 1.):
                 raise RuntimeError(f"Platform did not leave park after {STALL_S:g} s; state=0x{state:x}")
         return command
     except BaseException:

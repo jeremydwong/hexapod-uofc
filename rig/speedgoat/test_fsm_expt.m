@@ -6,6 +6,7 @@
 here = fileparts(mfilename('fullpath'));
 addpath(here);
 P = expt_params();
+cal = expt_cal();
 [TT, n_trials] = load_trials(fullfile(here, 'trials_example.csv'), P);
 clear fsm_expt                       % reset its persistent state
 
@@ -21,7 +22,7 @@ for i = 1:n
     sway = sway - sway * dt / tau_sway + sway_sd * sqrt(2 * dt / tau_sway) * randn(1, 2);
     settled = settled + (sp(1:2) - settled) * dt / recover_s;
     cop = stance + sway - gain * (sp(1:2) - settled);
-    [sp, state, trial, ~, stable_s, cop_sd] = fsm_expt(t, t >= 2, 1, cop, 700, TT, n_trials, P);
+    [sp, state, trial, ~, stable_s, cop_sd] = fsm_expt(t, t >= 2, 1, cop, 700, TT, n_trials, cal.min_fz_N, cal.noise_floor_N, P);
     log(i, :) = [t state trial sp(1) sp(2) cop cop_sd stable_s];
     if state == 5, log = log(1:i, :); break; end
 end

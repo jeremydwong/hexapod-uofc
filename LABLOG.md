@@ -2,6 +2,50 @@
 
 Newest entry first. What was done, what is known, what to try next.
 
+## 2026-10-21: readback faults, tolerant relay, 3D viewer, tunable calibration
+
+### Found
+
+- **Speed is not capped.** demo_fast (14 surges of 100 mm in 0.375 s): 12 followed within
+  45-90 ms and settled ~50 ms after the command. Two lagged 1.2 s and crept up slowly: the first
+  move of the run and one after 25 s idle (others came after 10-18 s idle). Suspect a controller
+  soft start after ~20 s without motion: `experiments/demo_idle.json` (waits 5/15/25/40 s) tests it,
+  with and without `--accel-profile rapid`.
+- **SDK error 2 = the pose/actuator readback dies, sends keep working** (the pause sent after
+  each fault always took effect). Before it, ~200 ms loop stalls about every 20 s while holding,
+  likely WinUSB read timeouts. The DLL never resets a halted pipe; Motion Systems' examples ignore
+  failed reads, so their software would not notice. One fault dropped the controller off USB
+  entirely (SDK error 3 on connect).
+- **The Motion Systems services came back on their own** (Automatic; seen Running after a
+  replug) although stop_ms_processes.bat had stopped them. A running Com64 holds the device:
+  `pnputil /restart-device` then queues a reboot.
+- **Software replug works:** `pnputil /remove-device "USB\VID_0483&PID_A110\<serial>"` then
+  `pnputil /scan-devices` (admin, nothing holding the device) revived the readback.
+- USB selective suspend is on (AC) on this PC; not yet changed.
+
+### Done
+
+- Relay and streaming tolerate failed reads (log, keep sending); reads at 20 Hz without the
+  actuator read; readback dead 30 s -> stop after the current trial. Log always saved; `read_err`
+  column. After read failures the run resets the USB link (admin) or prints the pnputil commands.
+- Our tools refuse to connect while the Motion Systems services run; `start_ms_processes.bat`
+  restores them for ForceSeatPM users.
+- `uv run kneel`: lower to park at 50 mm/s and Park. hexapod-expt-run lifts/lowers at 50 mm/s.
+- Lift stall check no longer trips when the lift starts at home.
+- 3D viewer (`scene3d.py`, tornado + three.js, one message per frame): ~57 fps headless (meshcat 35).
+  Forces in N with C = diag([500 500 1000 150 100 75]); GRF arrows at each plate's CoP (centres
+  ±125 mm); fixed force ranges that widen to 1.1x the 20 s peak.
+- Speedgoat calibration is tunable (`expt_cal.m`, `apply_expt_cal`, `retare_expt`); desktop tests
+  pass. **Not yet built for the target**: one final rebuild with the plates empty.
+
+### Next
+
+1. Admin PowerShell: stop_ms_processes.bat, then demo_idle (auto, then rapid). Check stalls,
+   read_err and the idle lags.
+2. If stalls persist with the services stopped: rear/USB 2.0 port, short shielded cable, USB
+   selective suspend off, USB isolator.
+3. Final Speedgoat rebuild (plates empty), verify setparam/getparam; Fz sign check with a press.
+
 ## 2026-10-20: Speedgoat app live, first platform motion, USB link drops pose reads
 
 ### Done
@@ -57,15 +101,15 @@ controller is not on Ethernet (10.1.1.75 unreachable); the Speedgoat only talks 
 
 ### Next
 
-1. Admin PowerShell: `Stop-Service -DisplayName "MotionSystems Com64", "MotionSystems AppWatcher64"`,
-   then replug the USB. Rerun the paused-send timing test (no motion). If there are no stalls and no
+1. Double-click `stop_ms_processes.bat` (repo root; elevates itself, stops both services and
+   ForceSeatPM), then replug the USB. Rerun the paused-send timing test (no motion). If there are no stalls and no
    error 2, the services were the cause; set them to Manual startup on this PC.
 2. Then the 75% run: `uv run hexapod-expt-run --hexapod --protocol experiments/demo_fast.json`
    (area clear, E-stop in hand; lift starts at once, the surge on Start).
 3. If error 2 persists with the services stopped: USB directly into the PC, USB selective suspend
    off; ask Motion Systems what `GetRecentErrorCode` 2 means (DLL 2.177); try Ethernet.
-4. Force calibration: full scale at ±5 V is [500 500 1000 N, 150 100 75 N·m] per plate, so
-   `C = diag([100 100 200 30 20 15])` per volt. Check the Fz sign with a press first (a negative Fz
+4. Force calibration (scale factors from the lab, amplifier output ±5 V; halve them for ±10 V):
+   `C = diag([500 500 1000 150 100 75])` per plate (N/V for Fx Fy Fz, N·m/V for Mx My Mz). Check the Fz sign with a press first (a negative Fz
    would read as empty plates and trigger the override). Rebuild with the plates empty (re-tare).
 5. Verify the rest of the channel order (Fz, moments) by pressing on each plate; set
    `P.noise_floor_N` from the empty-plate Fz noise once `C` is real.
