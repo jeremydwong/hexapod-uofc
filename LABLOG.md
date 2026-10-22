@@ -45,6 +45,14 @@ Newest entry first. What was done, what is known, what to try next.
 2. If stalls persist with the services stopped: rear/USB 2.0 port, short shielded cable, USB
    selective suspend off, USB isolator.
 3. Final Speedgoat rebuild (plates empty), verify setparam/getparam; Fz sign check with a press.
+4. **Relay in its own process.** A later demo run (14:58) faulted on a 587 ms relay loop stall
+   (> STALL_ABORT_S 0.5) right as the plot window and 3D view opened: the relay thread shares the
+   GIL with matplotlib and the viewer server. That run saved no data file (the rest of its
+   terminal output was not captured). Move the relay to a separate process; the plot/3D read its
+   pose. Also needed for the Linux PREEMPT_RT port.
+5. `start_expt_rt` only rebuilds when a model source is newer than expt_rt.mldatx (the next call
+   will: the tunable conversion). After it, `setStartupApp(tg, 'expt_rt')` boots the app with the
+   Speedgoat (tares in the first 2 s: plates empty), no MATLAB needed day to day.
 
 ## 2026-10-20: Speedgoat app live, first platform motion, USB link drops pose reads
 
